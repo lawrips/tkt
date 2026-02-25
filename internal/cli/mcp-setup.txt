@@ -1,0 +1,4 @@
+MCP setup (for native MCP integration, run these commands):
+
+  Claude Code:  claude mcp add --scope user --transport stdio tkt -- {{path}} mcp
+  Codex:        codex mcp add tkt -- {{path}} mcp

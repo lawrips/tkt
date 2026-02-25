@@ -1,0 +1,6 @@
+/tkt
+build.sh
+.claude/
+.mcp.json
+CLAUDE.md
+docs/internal/

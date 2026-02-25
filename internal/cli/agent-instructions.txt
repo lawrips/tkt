@@ -1,0 +1,11 @@
+## tkt
+
+tkt is a ticket management tool. Run `tkt help` for CLI usage, but prefer
+using tkt via MCP tools when available.
+
+IMPORTANT - Run `tkt workflow` before the first tk command in a session to learn the user's ticket
+workflow and preferences. 
+
+Tips:
+- Use friendly names when creating tickets (e.g. tkt create --id "c-websocket-fix") vs letting tkt autogenerate c-g433d
+- Use search (tkt ls "search term") to find tickets that match this term in the id and title
