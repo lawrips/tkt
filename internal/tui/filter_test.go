@@ -23,6 +23,12 @@ func makeRecord(id, title, desc, typ string, priority int, status string, tags [
 	}
 }
 
+func makeRecordWithParent(id, title, desc, typ string, priority int, status string, tags []string, assignee string, parent string) ticket.Record {
+	rec := makeRecord(id, title, desc, typ, priority, status, tags, assignee)
+	rec.Front.Parent = parent
+	return rec
+}
+
 func TestApplyFilterMatchesTicketID(t *testing.T) {
 	records := []ticket.Record{
 		makeRecord("tkv2-mcp-protocol", "MCP stdio transport", "", "feature", 1, "open", nil, ""),
@@ -203,5 +209,74 @@ func TestApplyFilterStructuredFields(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestParseFilterParent(t *testing.T) {
+	f := parseFilter("parent:my-epic")
+	if f.parent != "my-epic" {
+		t.Errorf("parent = %q, want %q", f.parent, "my-epic")
+	}
+	if f.priority != -1 {
+		t.Errorf("priority = %d, want -1", f.priority)
+	}
+}
+
+func TestApplyFilterParent(t *testing.T) {
+	records := []ticket.Record{
+		makeRecordWithParent("child-1", "Child one", "", "task", 1, "open", nil, "", "my-epic"),
+		makeRecordWithParent("child-2", "Child two", "", "task", 1, "open", nil, "", "my-epic"),
+		makeRecordWithParent("other", "Other ticket", "", "task", 1, "open", nil, "", "other-epic"),
+		makeRecord("no-parent", "No parent", "", "task", 1, "open", nil, ""),
+	}
+
+	tests := []struct {
+		name    string
+		input   string
+		wantIDs []string
+	}{
+		{
+			name:    "filter by parent",
+			input:   "parent:my-epic",
+			wantIDs: []string{"child-1", "child-2"},
+		},
+		{
+			name:    "parent filter case insensitive",
+			input:   "parent:My-Epic",
+			wantIDs: []string{"child-1", "child-2"},
+		},
+		{
+			name:    "parent filter no match",
+			input:   "parent:nonexistent",
+			wantIDs: nil,
+		},
+		{
+			name:    "parent combined with type",
+			input:   "parent:my-epic type:task",
+			wantIDs: []string{"child-1", "child-2"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := parseFilter(tt.input)
+			got := applyFilter(records, f)
+			if len(got) != len(tt.wantIDs) {
+				t.Fatalf("expected %d results, got %d", len(tt.wantIDs), len(got))
+			}
+			for i, want := range tt.wantIDs {
+				if got[i].Front.ID != want {
+					t.Errorf("result[%d] = %s, want %s", i, got[i].Front.ID, want)
+				}
+			}
+		})
+	}
+}
+
+func TestFilterToInputParent(t *testing.T) {
+	f := Filter{parent: "my-epic", priority: -1}
+	got := filterToInput(f)
+	if got != "parent:my-epic" {
+		t.Errorf("filterToInput = %q, want %q", got, "parent:my-epic")
 	}
 }

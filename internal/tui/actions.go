@@ -24,11 +24,17 @@ const (
 	overlayDep
 	overlayCreate
 	overlayDelete
+	overlayFilterPicker
 )
 
 // mutationDoneMsg is sent after a tk subprocess completes.
 type mutationDoneMsg struct {
 	err error
+}
+
+// filterPickerDoneMsg is sent when the user selects from the filter picker.
+type filterPickerDoneMsg struct {
+	filter Filter
 }
 
 // overlayState holds the full state of the action overlay.
@@ -37,8 +43,9 @@ type overlayState struct {
 	ticketID string // ID of the ticket being acted on (empty for create)
 
 	// dropdown state
-	choices []string
-	cursor  int
+	choices      []string
+	filterValues []Filter // parallel to choices; pre-built Filter for overlayFilterPicker
+	cursor       int
 
 	// text input state
 	input textinput.Model
@@ -108,6 +115,8 @@ func (o overlayState) overlayTitle() string {
 		return "Create ticket"
 	case overlayDelete:
 		return fmt.Sprintf("Delete ticket  [%s]", o.ticketID)
+	case overlayFilterPicker:
+		return fmt.Sprintf("Filter by  [%s]", o.ticketID)
 	}
 	return ""
 }
@@ -117,7 +126,8 @@ func (o overlayState) isDropdown() bool {
 	return o.kind == overlayStatus ||
 		o.kind == overlayPriority ||
 		o.kind == overlayType ||
-		o.kind == overlayDelete
+		o.kind == overlayDelete ||
+		o.kind == overlayFilterPicker
 }
 
 // Update processes a key message for the overlay.
@@ -167,6 +177,9 @@ func (o overlayState) executeDropdown() tea.Cmd {
 	selected := o.choices[o.cursor]
 	var args []string
 	switch o.kind {
+	case overlayFilterPicker:
+		f := o.filterValues[o.cursor]
+		return func() tea.Msg { return filterPickerDoneMsg{filter: f} }
 	case overlayStatus:
 		args = []string{"edit", o.ticketID, "-s", selected}
 	case overlayPriority:

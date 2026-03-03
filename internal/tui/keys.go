@@ -24,6 +24,7 @@ type KeyMap struct {
 	Delete        key.Binding
 	Edit          key.Binding
 	Filter        key.Binding
+	FocusFilter   key.Binding
 	ProjectPicker key.Binding
 }
 
@@ -108,6 +109,10 @@ var DefaultKeyMap = KeyMap{
 	Filter: key.NewBinding(
 		key.WithKeys("/"),
 		key.WithHelp("/", "filter"),
+	),
+	FocusFilter: key.NewBinding(
+		key.WithKeys("f"),
+		key.WithHelp("f", "filter from ticket"),
 	),
 	ProjectPicker: key.NewBinding(
 		key.WithKeys("o"),
