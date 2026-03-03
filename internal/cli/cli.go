@@ -160,7 +160,9 @@ func rootCommand() command {
 			"Start MCP stdio JSON-RPC server",
 			runMCP,
 		),
-		"version": commandWithRunner("version", "version", "Print version and exit", runVersion),
+		"version":      commandWithRunner("version", "version", "Print version and exit", runVersion),
+		"instructions": commandWithRunner("agent-instructions", "agent-instructions", "Print agent instructions", runInstructions),
+		"setup":        commandWithRunner("agent-setup", "agent-setup", "Print setup instructions", runSetup),
 		"context": commandWithRunner(
 			"context",
 			"context <id>",
@@ -279,7 +281,7 @@ func isHelpArg(token string) bool {
 // requiresInit returns true for commands that need a resolved project.
 func requiresInit(cmdName string) bool {
 	switch cmdName {
-	case "init", "config", "tui", "mcp", "serve", "workflow", "version":
+	case "init", "config", "tui", "mcp", "serve", "workflow", "version", "agent-instructions", "agent-setup":
 		return false
 	}
 	return true

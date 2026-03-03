@@ -21,17 +21,16 @@ tkt is a personal project built for my own workflow. MIT license - it's shared a
 
 ```bash
 brew install go  # if needed
-git clone https://github.com/lawrips/tkt.git
-cd tkt
+go install github.com/lawrips/tkt/cmd/tkt@latest
 ```
 
 Then open your AI coding agent (Claude Code, Codex, etc.) and tell it:
 
 ```
-Follow setup.md to set up tkt on this system
+Run `tkt agent-instructions` and follow the instructions to set up tkt on this system
 ```
 
-It will build, install, register MCP, and configure everything. You can also follow [setup.md](setup.md) manually.
+It will register MCP, and configure everything. You can also follow [setup.md](internal\cli\setup.md) manually.
 
 After that, in each project you want to use tkt in run:
 
