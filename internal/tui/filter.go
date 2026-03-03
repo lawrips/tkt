@@ -22,6 +22,7 @@ type Filter struct {
 	ticketType string
 	priority   int    // -1 = any
 	status     string // "" = any
+	parent     string
 }
 
 // isEmpty returns true when no filter criteria are active.
@@ -31,7 +32,8 @@ func (f Filter) isEmpty() bool {
 		f.tag == "" &&
 		f.ticketType == "" &&
 		f.priority == -1 &&
-		f.status == ""
+		f.status == "" &&
+		f.parent == ""
 }
 
 // description returns a human-readable summary of the active filter.
@@ -39,7 +41,7 @@ func (f Filter) description() string {
 	if f.isEmpty() {
 		return "none"
 	}
-	parts := make([]string, 0, 5)
+	parts := make([]string, 0, 6)
 	if f.ticketType != "" {
 		parts = append(parts, "type="+f.ticketType)
 	}
@@ -54,6 +56,9 @@ func (f Filter) description() string {
 	}
 	if f.status != "" {
 		parts = append(parts, "status="+f.status)
+	}
+	if f.parent != "" {
+		parts = append(parts, "parent="+f.parent)
 	}
 	if f.text != "" {
 		parts = append(parts, "text="+f.text)
@@ -95,6 +100,8 @@ func parseFilter(input string) Filter {
 			}
 		case "status":
 			f.status = val
+		case "parent":
+			f.parent = val
 		default:
 			// Unknown prefix — treat whole token as free text.
 			textParts = append(textParts, tok)
@@ -127,6 +134,9 @@ func applyFilter(records []ticket.Record, f Filter) []ticket.Record {
 			continue
 		}
 		if f.status != "" && !strings.EqualFold(rec.Front.Status, f.status) {
+			continue
+		}
+		if f.parent != "" && !strings.EqualFold(rec.Front.Parent, f.parent) {
 			continue
 		}
 		if text != "" {
@@ -199,7 +209,7 @@ func (fi FilterInput) View(width int) string {
 
 // filterToInput converts an active Filter back to an editable input string.
 func filterToInput(f Filter) string {
-	parts := make([]string, 0, 6)
+	parts := make([]string, 0, 7)
 	if f.ticketType != "" {
 		parts = append(parts, "type:"+f.ticketType)
 	}
@@ -214,6 +224,9 @@ func filterToInput(f Filter) string {
 	}
 	if f.status != "" {
 		parts = append(parts, "status:"+f.status)
+	}
+	if f.parent != "" {
+		parts = append(parts, "parent:"+f.parent)
 	}
 	if f.text != "" {
 		parts = append(parts, f.text)

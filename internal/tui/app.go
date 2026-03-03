@@ -57,7 +57,7 @@ func contextualHelpBar(bindings []key.Binding, width int) string {
 
 // boardHints returns the key bindings shown in the board view help bar.
 func boardHints(km KeyMap) []key.Binding {
-	return []key.Binding{km.Up, km.Down, km.Left, km.Right, km.HalfPageDown, km.HalfPageUp, km.GoTop, km.GoBottom, km.Status, km.Priority, km.Create, km.Filter, km.ProjectPicker, km.Help}
+	return []key.Binding{km.Up, km.Down, km.Left, km.Right, km.HalfPageDown, km.HalfPageUp, km.GoTop, km.GoBottom, km.Status, km.Priority, km.Create, km.Filter, km.FocusFilter, km.ProjectPicker, km.Help}
 }
 
 // detailHints returns the key bindings shown in the detail view help bar.
@@ -364,6 +364,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshPending = true
 		return m, nil
 
+	case filterPickerDoneMsg:
+		m.overlay = overlayState{}
+		m.filter = msg.filter
+		m.board.setColumns(applyFilter(m.records, m.filter))
+		m.view = viewBoard
+		return m, nil
+
 	case tea.KeyMsg:
 		// Filter input mode takes priority over everything else.
 		if m.filterInputMode {
@@ -522,6 +529,32 @@ func (m Model) updateBoard(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// Esc clears active filter on the board.
+		if key.Matches(kmsg, key.NewBinding(key.WithKeys("esc"))) {
+			if !m.filter.isEmpty() {
+				m.filter = Filter{priority: -1}
+				m.board.setColumns(applyFilter(m.records, m.filter))
+				return m, nil
+			}
+			return m, nil
+		}
+
+		// Contextual filter picker.
+		if key.Matches(kmsg, m.keys.FocusFilter) {
+			rec, ok := m.board.selectedRecord()
+			if !ok {
+				return m, nil
+			}
+			choices, values := buildFilterPickerChoices(rec)
+			if len(choices) == 0 {
+				return m, nil
+			}
+			ov := newDropdownOverlay(overlayFilterPicker, rec.ID, choices)
+			ov.filterValues = values
+			m.overlay = ov
+			return m, nil
+		}
+
 		// Action keys — require a selected ticket (except create).
 		if cmd, consumed := m.handleActionKey(kmsg); consumed {
 			return m, cmd
@@ -531,6 +564,59 @@ func (m Model) updateBoard(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.board, cmd = m.board.update(msg, m.keys)
 	return m, cmd
+}
+
+// buildFilterPickerChoices builds the display choices and pre-built Filter values
+// for the contextual filter picker based on the selected ticket's fields.
+func buildFilterPickerChoices(rec ticket.Record) (choices []string, values []Filter) {
+	base := Filter{priority: -1} // empty filter base
+
+	// parent: — epic uses own ID (children), non-epic with parent uses parent ID (siblings)
+	if strings.EqualFold(rec.Front.Type, "epic") {
+		choices = append(choices, "parent:"+rec.ID+" (children)")
+		f := base
+		f.parent = rec.ID
+		values = append(values, f)
+	} else if rec.Front.Parent != "" {
+		choices = append(choices, "parent:"+rec.Front.Parent+" (siblings)")
+		f := base
+		f.parent = rec.Front.Parent
+		values = append(values, f)
+	}
+
+	// assignee:
+	if rec.Front.Assignee != "" {
+		choices = append(choices, "assignee:"+rec.Front.Assignee)
+		f := base
+		f.assignee = rec.Front.Assignee
+		values = append(values, f)
+	}
+
+	// tag: — one entry per tag
+	for _, tag := range rec.Front.Tags {
+		choices = append(choices, "tag:"+tag)
+		f := base
+		f.tag = tag
+		values = append(values, f)
+	}
+
+	// type: — always present
+	{
+		choices = append(choices, "type:"+rec.Front.Type)
+		f := base
+		f.ticketType = rec.Front.Type
+		values = append(values, f)
+	}
+
+	// priority: — always present
+	{
+		choices = append(choices, "priority:"+fmt.Sprintf("%d", rec.Front.Priority))
+		f := base
+		f.priority = rec.Front.Priority
+		values = append(values, f)
+	}
+
+	return choices, values
 }
 
 // handleActionKey checks if the key message matches an action binding.
@@ -828,16 +914,17 @@ func (m Model) projectPickerView() string {
 
 func (m Model) helpView() string {
 	content := fmt.Sprintf(
-		"%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s\n",
+		"%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s\n",
 		titleStyle.Render("Help"),
 		helpStyle.Render(fmt.Sprintf("  %-14s %s", "h/l/←/→", "switch columns")),
 		helpStyle.Render(fmt.Sprintf("  %-14s %s", "j/k/↑/↓", "move up/down")),
 		helpStyle.Render(fmt.Sprintf("  %-14s %s", "ctrl+d/ctrl+u", "half page down/up")),
 		helpStyle.Render(fmt.Sprintf("  %-14s %s", "g/G", "jump to top/bottom")),
 		helpStyle.Render(fmt.Sprintf("  %-14s %s", "enter", "open ticket / drill in")),
-		helpStyle.Render(fmt.Sprintf("  %-14s %s", "esc", "go back")),
+		helpStyle.Render(fmt.Sprintf("  %-14s %s", "esc", "clear filter / go back")),
 		helpStyle.Render(fmt.Sprintf("  %-14s %s", "?", "toggle help")),
 		helpStyle.Render(fmt.Sprintf("  %-14s %s", "/", "filter tickets")),
+		helpStyle.Render(fmt.Sprintf("  %-14s %s", "f", "filter from ticket")),
 		helpStyle.Render(fmt.Sprintf("  %-14s %s", "q", "quit (from board) / back")),
 		helpStyle.Render(fmt.Sprintf("  %-14s %s", "s", "set status")),
 		helpStyle.Render(fmt.Sprintf("  %-14s %s", "p", "set priority")),
