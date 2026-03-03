@@ -4,26 +4,11 @@ System-wide installation and per-project setup for tkt.
 
 ## Before Starting
 
-1. **Prerequisites**: Go must be installed (`go version`).
-2. **Detect context**: Check if tkt is already built, on PATH, MCP registered, etc. Skip anything that's already done.
+1. **Detect context**: Check if tkt is already built, on PATH, MCP registered, etc. Skip anything that's already done.
 
 ## System Setup
 
-### 1. Build
-
-```bash
-go build -o tkt ./cmd/tkt
-```
-
-Verify: `./tkt help` should print usage output.
-
-### 2. Add to PATH
-
-Symlink the built binary somewhere on PATH so `tkt` is available globally (e.g. ~/.local/bin).
-
-Verify: `which tkt` should resolve.
-
-### 3. Register MCP Server
+### 1. Register MCP Server
 
 tkt includes an MCP server (22 tools: 14 read, 8 write) that agents can use natively.
 One-time global registration:
@@ -40,11 +25,13 @@ codex mcp add tkt -- $(which tkt) mcp
 
 Run whichever is appropriate. MCP tools become available on the next agent session.
 
-### 4. Add Agent Instructions
+### 2. Add Agent Instructions
 
-The file `internal/cli/agent-instructions.txt` in this repo contains the generic tkt
-agent instructions. Append its contents to the user's agent instructions file
+Run `tkt agent-instructions` to get generic tkt agent instructions. Append its
+contents to the user's agent instructions file
 (`~/.claude/CLAUDE.md`, `AGENTS.md`, or equivalent).
+
+Example: `tkt agent-instructions >> ~/.claude/CLAUDE.md`
 
 Workflow conventions themselves are read from `~/.tkt/workflow.md` when agents run
 `tkt workflow`. Users can edit that file directly to customize lifecycle states,
@@ -53,7 +40,7 @@ commit conventions, and workflow rules.
 If tkt instructions are already present (look for a `## tkt` heading), skip this step.
 Preserve any existing content in the file.
 
-### 5. Start Background Service
+### 3. Start Background Service
 
 ```bash
 tkt serve start
