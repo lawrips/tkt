@@ -73,8 +73,10 @@ func (s *Server) handleCreate(_ stdctx.Context, req mcplib.CallToolRequest) (*mc
 			Extra:       map[string]ticket.ExtraField{},
 		},
 		Body: ticket.Body{
-			Title:       title,
-			Description: req.GetString("description", ""),
+			Title:              title,
+			Description:        req.GetString("description", ""),
+			Design:             req.GetString("design", ""),
+			AcceptanceCriteria: req.GetString("acceptance_criteria", ""),
 		},
 	}
 
@@ -108,12 +110,13 @@ func (s *Server) handleEdit(_ stdctx.Context, req mcplib.CallToolRequest) (*mcpl
 	}
 
 	changed := make([]string, 0)
-	if v := req.GetString("title", ""); v != "" {
-		record.Body.Title = v
+	args := req.GetArguments()
+	if _, ok := args["title"]; ok {
+		record.Body.Title = req.GetString("title", "")
 		changed = append(changed, "title")
 	}
-	if v := req.GetString("description", ""); v != "" {
-		record.Body.Description = v
+	if _, ok := args["description"]; ok {
+		record.Body.Description = req.GetString("description", "")
 		changed = append(changed, "description")
 	}
 	if v := req.GetString("status", ""); v != "" {
@@ -128,18 +131,29 @@ func (s *Server) handleEdit(_ stdctx.Context, req mcplib.CallToolRequest) (*mcpl
 		record.Front.Priority = p
 		changed = append(changed, "priority")
 	}
-	if v := req.GetString("assignee", ""); v != "" {
-		record.Front.Assignee = v
+	if _, ok := args["assignee"]; ok {
+		record.Front.Assignee = req.GetString("assignee", "")
 		changed = append(changed, "assignee")
 	}
-	// Parent: check key presence so that parent="" clears the field.
-	if _, hasParent := req.GetArguments()["parent"]; hasParent {
+	if _, ok := args["parent"]; ok {
 		record.Front.Parent = req.GetString("parent", "")
 		changed = append(changed, "parent")
 	}
-	if v := req.GetString("tags", ""); v != "" {
-		record.Front.Tags = engine.ParseCSV(v)
+	if _, ok := args["tags"]; ok {
+		record.Front.Tags = engine.ParseCSV(req.GetString("tags", ""))
 		changed = append(changed, "tags")
+	}
+	if _, ok := args["design"]; ok {
+		record.Body.Design = req.GetString("design", "")
+		changed = append(changed, "design")
+	}
+	if _, ok := args["acceptance_criteria"]; ok {
+		record.Body.AcceptanceCriteria = req.GetString("acceptance_criteria", "")
+		changed = append(changed, "acceptance_criteria")
+	}
+	if _, ok := args["external_ref"]; ok {
+		record.Front.ExternalRef = req.GetString("external_ref", "")
+		changed = append(changed, "external_ref")
 	}
 
 	if err := ticket.SaveRecord(record); err != nil {

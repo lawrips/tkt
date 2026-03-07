@@ -189,6 +189,9 @@ func (s *Server) registerWriteTools() {
 			mcplib.WithString("parent", mcplib.Description("Parent ticket ID")),
 			mcplib.WithString("tags", mcplib.Description("Comma-separated tags")),
 			mcplib.WithString("id", mcplib.Description("Custom ticket ID")),
+			mcplib.WithString("design", mcplib.Description("Design section content")),
+			mcplib.WithString("acceptance_criteria", mcplib.Description("Acceptance criteria content")),
+			mcplib.WithString("external_ref", mcplib.Description("External reference")),
 		),
 		s.handleCreate,
 	)
@@ -207,6 +210,9 @@ func (s *Server) registerWriteTools() {
 			mcplib.WithString("assignee", mcplib.Description("New assignee")),
 			mcplib.WithString("parent", mcplib.Description("New parent ticket ID (empty string clears parent)")),
 			mcplib.WithString("tags", mcplib.Description("Comma-separated tags")),
+			mcplib.WithString("design", mcplib.Description("New design content (empty string clears design)")),
+			mcplib.WithString("acceptance_criteria", mcplib.Description("New acceptance criteria (empty string clears acceptance_criteria)")),
+			mcplib.WithString("external_ref", mcplib.Description("New external reference (empty string clears external_ref)")),
 		),
 		s.handleEdit,
 	)
