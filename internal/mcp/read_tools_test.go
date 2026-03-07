@@ -31,7 +31,7 @@ func TestHandleWorkflow(t *testing.T) {
 		t.Fatalf("write workflow file: %v", err)
 	}
 
-	srv := NewServer("demo", t.TempDir())
+	srv := NewServer("demo", t.TempDir(), "")
 	result, err := srv.handleWorkflow(stdctx.Background(), mcplib.CallToolRequest{})
 	if err != nil {
 		t.Fatalf("handleWorkflow: %v", err)
@@ -51,6 +51,45 @@ func TestHandleWorkflow(t *testing.T) {
 	}
 	if payload["content"] != want {
 		t.Fatalf("expected workflow content %q, got %#v", want, payload["content"])
+	}
+}
+
+func TestHandleWorkflowProjectOverride(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// Write a global workflow.
+	globalPath, err := project.WorkflowPath()
+	if err != nil {
+		t.Fatalf("workflow path: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(globalPath), 0755); err != nil {
+		t.Fatalf("mkdir global workflow dir: %v", err)
+	}
+	if err := os.WriteFile(globalPath, []byte("# Global\n"), 0644); err != nil {
+		t.Fatalf("write global workflow: %v", err)
+	}
+
+	// Write a project-level workflow that should take precedence.
+	projectRoot := t.TempDir()
+	projDir := filepath.Join(projectRoot, ".tkt")
+	if err := os.MkdirAll(projDir, 0755); err != nil {
+		t.Fatalf("mkdir project .tkt dir: %v", err)
+	}
+	want := "# Project Workflow\n"
+	if err := os.WriteFile(filepath.Join(projDir, "workflow.md"), []byte(want), 0644); err != nil {
+		t.Fatalf("write project workflow: %v", err)
+	}
+
+	srv := NewServer("demo", t.TempDir(), projectRoot)
+	result, err := srv.handleWorkflow(stdctx.Background(), mcplib.CallToolRequest{})
+	if err != nil {
+		t.Fatalf("handleWorkflow: %v", err)
+	}
+
+	payload := decodeMCPPayload(t, result)
+	if payload["content"] != want {
+		t.Fatalf("expected project workflow %q, got %q", want, payload["content"])
 	}
 }
 
@@ -75,7 +114,7 @@ func TestHandleListReturnsSummariesAndShowRemainsDetailed(t *testing.T) {
 		},
 	})
 
-	srv := NewServer("demo", ticketDir)
+	srv := NewServer("demo", ticketDir, "")
 
 	listResult, err := srv.handleList(stdctx.Background(), mcplib.CallToolRequest{})
 	listPayload := decodeMCPPayloadFromCall(t, listResult, err)
@@ -159,7 +198,7 @@ func TestDashboardEpicViewAndProgressReturnSummaries(t *testing.T) {
 		},
 	})
 
-	srv := NewServer("demo", ticketDir)
+	srv := NewServer("demo", ticketDir, "")
 
 	dashboardResult, err := srv.handleDashboard(stdctx.Background(), mcplib.CallToolRequest{})
 	dashboardPayload := decodeMCPPayloadFromCall(t, dashboardResult, err)

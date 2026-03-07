@@ -71,7 +71,7 @@ func rootHelpSections() []helpSection {
 		{
 			title: "Workflow & Tools",
 			entries: []helpEntry{
-				{"workflow", "Ticket lifecycle, commit format, and conventions  ★"},
+				{"workflow", "Ticket workflow guide (.tkt/workflow.md or ~/.tkt/workflow.md)  ★"},
 				{"tui", "Interactive terminal UI"},
 				{"serve start|stop|status|logs", "Manage background watcher daemon"},
 				{"mcp", "Start MCP stdio JSON-RPC server"},

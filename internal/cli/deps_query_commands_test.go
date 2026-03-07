@@ -264,6 +264,60 @@ func TestWorkflowFallsBackWhenFileMissing(t *testing.T) {
 	})
 }
 
+func TestWorkflowProjectOverridesGlobal(t *testing.T) {
+	withWorkspace(t, func(dir string) {
+		// Write a global workflow.
+		globalPath, err := project.WorkflowPath()
+		if err != nil {
+			t.Fatalf("workflow path: %v", err)
+		}
+		if err := os.MkdirAll(filepath.Dir(globalPath), 0755); err != nil {
+			t.Fatalf("mkdir global workflow dir: %v", err)
+		}
+		if err := os.WriteFile(globalPath, []byte("# Global Workflow\n"), 0644); err != nil {
+			t.Fatalf("write global workflow: %v", err)
+		}
+
+		// Write a project-level workflow that should take precedence.
+		projDir := filepath.Join(dir, ".tkt")
+		if err := os.MkdirAll(projDir, 0755); err != nil {
+			t.Fatalf("mkdir project .tkt dir: %v", err)
+		}
+		projWorkflow := "# Project Workflow\n\nProject-specific rules.\n"
+		if err := os.WriteFile(filepath.Join(projDir, "workflow.md"), []byte(projWorkflow), 0644); err != nil {
+			t.Fatalf("write project workflow: %v", err)
+		}
+
+		out, _, err := runCmd(t, "", "workflow")
+		if err != nil {
+			t.Fatalf("workflow: %v", err)
+		}
+		if !strings.Contains(out, "# Project Workflow") {
+			t.Fatalf("expected project workflow content, got %q", out)
+		}
+		if strings.Contains(out, "# Global Workflow") {
+			t.Fatalf("global workflow should not appear when project override exists, got %q", out)
+		}
+		if !strings.Contains(out, ".tkt/workflow.md") {
+			t.Fatalf("expected source to reference .tkt/workflow.md, got %q", out)
+		}
+
+		// JSON output should also use project workflow.
+		out, _, err = runCmd(t, "", "workflow", "--json")
+		if err != nil {
+			t.Fatalf("workflow --json: %v", err)
+		}
+		var envelope map[string]any
+		if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &envelope); err != nil {
+			t.Fatalf("invalid workflow --json: %v output=%q", err, out)
+		}
+		content := envelope["data"].(map[string]any)["content"].(string)
+		if content != projWorkflow {
+			t.Fatalf("expected project workflow in JSON, got %q", content)
+		}
+	})
+}
+
 func TestReadyJSONReturnsSummaries(t *testing.T) {
 	withWorkspace(t, func(_ string) {
 		seedTicket(t, "r-1", ticket.Frontmatter{

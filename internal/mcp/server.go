@@ -19,13 +19,15 @@ type Server struct {
 	s           *server.MCPServer
 	projectName string
 	ticketDir   string
+	projectRoot string // git root or cwd; used for project-level config lookups
 }
 
 // NewServer creates and configures the MCP server with all tools registered.
-func NewServer(projectName string, ticketDir string) *Server {
+func NewServer(projectName string, ticketDir string, projectRoot string) *Server {
 	s := &Server{
 		projectName: projectName,
 		ticketDir:   ticketDir,
+		projectRoot: projectRoot,
 	}
 	s.s = server.NewMCPServer(
 		"tkt",
@@ -305,42 +307,43 @@ func (s *Server) loadJournal() []engine.CommitJournalEntry {
 	return entries
 }
 
-// resolveProjectFromCwd resolves the project name from the current working directory.
-func resolveProjectFromCwd() (string, string, error) {
+// resolveProjectFromCwd resolves the project name, ticket dir, and project root from the cwd.
+func resolveProjectFromCwd() (name, ticketDir, projectRoot string, err error) {
 	cfg, err := project.Load()
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
-	name, _ := project.ResolveName(cfg, cwd, "")
+	name, _ = project.ResolveName(cfg, cwd, "")
 	if name == "" {
-		return "", "", fmt.Errorf("no project resolved; run tkt init first")
+		return "", "", "", fmt.Errorf("no project resolved; run tkt init first")
 	}
 	entry, ok := cfg.Projects[name]
 	if !ok {
-		return "", "", fmt.Errorf("project %q not found in config", name)
+		return "", "", "", fmt.Errorf("project %q not found in config", name)
 	}
 	dir := ""
 	if entry.Store == "central" {
 		d, err := engine.CentralProjectDir(name)
 		if err != nil {
-			return "", "", err
+			return "", "", "", err
 		}
 		dir = d
 	} else if entry.Path != "" {
 		dir = filepath.Join(entry.Path, ".tickets")
 	}
-	return name, dir, nil
+	root := project.DetectProjectPath(cwd)
+	return name, dir, root, nil
 }
 
 // NewServerFromCwd creates an MCP server by resolving the project from the cwd.
 func NewServerFromCwd() (*Server, error) {
-	name, dir, err := resolveProjectFromCwd()
+	name, dir, root, err := resolveProjectFromCwd()
 	if err != nil {
 		return nil, err
 	}
-	return NewServer(name, dir), nil
+	return NewServer(name, dir, root), nil
 }

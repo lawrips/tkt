@@ -138,7 +138,7 @@ func runWatchForeground(ctx context, args []string, cmdName string) error {
 		if resolveErr == nil {
 			ticketDir, dirErr := ticketStoreDir(mcpProject, mcpEntry)
 			if dirErr == nil {
-				mcpSrv := mcp.NewServer(mcpProject, ticketDir)
+				mcpSrv := mcp.NewServer(mcpProject, ticketDir, mcpEntry.Path)
 				go func() {
 					if serveErr := mcpSrv.ServeStdio(); serveErr != nil {
 						_, _ = fmt.Fprintf(ctx.stderr, "mcp: %v\n", serveErr)
