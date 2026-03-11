@@ -620,12 +620,12 @@ func collectCommitsForWatch(repoPath string, lastSHA string, registeredAt string
 
 func extractTicketActions(message string) map[string]string {
 	refPattern := regexp.MustCompile(`\[([A-Za-z0-9][A-Za-z0-9_-]*)\]`)
-	closePattern := regexp.MustCompile(`(?i)\b(?:closes|fixes)\s*:?\s*\[([A-Za-z0-9][A-Za-z0-9_-]*)\]`)
+	closePrefixPattern := regexp.MustCompile(`(?i)\b(?:closes|fixes)\s*:?\s*`)
 
 	actions := map[string]string{}
-	for _, match := range closePattern.FindAllStringSubmatch(message, -1) {
-		if len(match) > 1 {
-			actions[match[1]] = "close"
+	for _, loc := range closePrefixPattern.FindAllStringIndex(message, -1) {
+		for _, ticketID := range extractBracketList(message[loc[1]:]) {
+			actions[ticketID] = "close"
 		}
 	}
 	for _, match := range refPattern.FindAllStringSubmatch(message, -1) {
@@ -636,6 +636,23 @@ func extractTicketActions(message string) map[string]string {
 		}
 	}
 	return actions
+}
+
+func extractBracketList(input string) []string {
+	refPattern := regexp.MustCompile(`^\[([A-Za-z0-9][A-Za-z0-9_-]*)\]`)
+
+	ids := make([]string, 0)
+	rest := input
+	for {
+		rest = strings.TrimLeft(rest, " \t,")
+		match := refPattern.FindStringSubmatch(rest)
+		if len(match) < 2 {
+			break
+		}
+		ids = append(ids, match[1])
+		rest = rest[len(match[0]):]
+	}
+	return ids
 }
 
 func ticketStoreDir(projectName string, entry project.ProjectConfig) (string, error) {
