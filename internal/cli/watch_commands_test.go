@@ -597,6 +597,44 @@ func TestExtractTicketActionsCloseSyntaxVariants(t *testing.T) {
 	}
 }
 
+func TestExtractTicketActionsMultipleCloseBrackets(t *testing.T) {
+	cases := []struct {
+		name    string
+		message string
+		tickets []string
+	}{
+		{name: "space-separated", message: "Closes: [a-1] [b-2] [c-3]", tickets: []string{"a-1", "b-2", "c-3"}},
+		{name: "no-space", message: "Closes: [a-1][b-2][c-3]", tickets: []string{"a-1", "b-2", "c-3"}},
+		{name: "comma-separated", message: "Closes: [a-1], [b-2]", tickets: []string{"a-1", "b-2"}},
+		{name: "fixes-synonym", message: "Fixes: [a-1] [b-2]", tickets: []string{"a-1", "b-2"}},
+		{name: "single-still-works", message: "Closes: [a-1]", tickets: []string{"a-1"}},
+		{name: "mixed-close-and-ref", message: "Closes: [a-1] [b-2]\nAlso refs [c-3]", tickets: []string{"a-1", "b-2"}},
+		{name: "repeated-prefix-on-line", message: "Closes: [a-1] closes: [b-2]", tickets: []string{"a-1", "b-2"}},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			actions := extractTicketActions(tc.message)
+			for _, id := range tc.tickets {
+				if got := actions[id]; got != "close" {
+					t.Fatalf("expected %s to be close, got %q (actions=%v)", id, got, actions)
+				}
+			}
+		})
+	}
+}
+
+func TestExtractTicketActionsMultipleCloseMixedRef(t *testing.T) {
+	actions := extractTicketActions("Closes: [a-1] [b-2]\nAlso refs [c-3]")
+	if actions["a-1"] != "close" || actions["b-2"] != "close" {
+		t.Fatalf("expected a-1 and b-2 to be close, got %v", actions)
+	}
+	if actions["c-3"] != "ref" {
+		t.Fatalf("expected c-3 to be ref, got %v", actions)
+	}
+}
+
 func TestExtractTicketActionsRefOnly(t *testing.T) {
 	actions := extractTicketActions("[my-ticket] some work done")
 	if got := actions["my-ticket"]; got != "ref" {
@@ -605,13 +643,23 @@ func TestExtractTicketActionsRefOnly(t *testing.T) {
 }
 
 func TestExtractTicketActionsMixedCloseAndRef(t *testing.T) {
+	// Same line with additional text — only the bracket list immediately after
+	// Closes: should close. Later refs on the line stay refs.
 	actions := extractTicketActions("Closes: [close-me] also refs [ref-me]")
-
 	if got := actions["close-me"]; got != "close" {
 		t.Fatalf("expected close-me=close, got %q", got)
 	}
 	if got := actions["ref-me"]; got != "ref" {
-		t.Fatalf("expected ref-me=ref, got %q", got)
+		t.Fatalf("expected ref-me=ref (not part of the close list), got %q", got)
+	}
+
+	// Separate lines — only first line closes, second is ref.
+	actions2 := extractTicketActions("Closes: [close-me]\nalso refs [ref-me]")
+	if got := actions2["close-me"]; got != "close" {
+		t.Fatalf("expected close-me=close, got %q", got)
+	}
+	if got := actions2["ref-me"]; got != "ref" {
+		t.Fatalf("expected ref-me=ref (different line), got %q", got)
 	}
 }
 
