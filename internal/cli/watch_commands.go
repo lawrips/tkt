@@ -77,6 +77,8 @@ func runWatchForeground(ctx context, args []string, cmdName string) error {
 		}()
 	}
 
+	centralWarnings := newCentralSyncWarningTracker()
+
 	cycle := func() error {
 		if noWatcher {
 			return nil
@@ -89,6 +91,7 @@ func runWatchForeground(ctx context, args []string, cmdName string) error {
 		totalAppended := 0
 		totalClosed := 0
 		allWarnings := make([]string, 0)
+		needsCentralSync := false
 		for name, entry := range cfg.Projects {
 			if !entry.AutoLink && !entry.AutoClose && entry.Store != "central" {
 				continue
@@ -102,6 +105,19 @@ func runWatchForeground(ctx context, args []string, cmdName string) error {
 			totalClosed += closed
 			for _, w := range warnings {
 				allWarnings = append(allWarnings, fmt.Sprintf("%s: %s", name, w))
+			}
+			if entry.Store == "central" {
+				needsCentralSync = true
+			}
+		}
+		if needsCentralSync {
+			centralRoot, err := centralStoreRootDir()
+			if err != nil {
+				allWarnings = append(allWarnings, fmt.Sprintf("central: resolve central store root failed: %v", err))
+			} else {
+				for _, msg := range centralWarnings.record(centralRoot, syncCentralStoreGit(centralRoot)) {
+					allWarnings = append(allWarnings, msg)
+				}
 			}
 		}
 		if ctx.json {
@@ -531,15 +547,6 @@ func runWatchCycle(projectName string, entry project.ProjectConfig) (int, int, [
 		}
 	}
 
-	if entry.Store == "central" {
-		centralRoot, err := centralStoreRootDir()
-		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("resolve central store root failed: %v", err))
-		} else if msg := syncCentralStoreGit(centralRoot); msg != "" {
-			warnings = append(warnings, msg)
-		}
-	}
-
 	return len(toAppend), closedCount, warnings, nil
 }
 
@@ -710,6 +717,16 @@ func syncCentralStoreGit(storeRoot string) string {
 		}
 	}
 
+	localChanges, err := centralStoreHasWorkingTreeChanges(storeRoot)
+	if err != nil {
+		return fmt.Sprintf("git status failed: %v", err)
+	}
+
+	var preSyncResult centralPreSyncResult
+	if remoteConfigured && localChanges {
+		preSyncResult = preSyncCentralStoreRemote(storeRoot, remoteNames[0])
+	}
+
 	if out, err := exec.Command("git", "-C", storeRoot, "add", "-A").CombinedOutput(); err != nil {
 		return fmt.Sprintf("git add failed: %v (%s)", err, strings.TrimSpace(string(out)))
 	}
@@ -726,7 +743,7 @@ func syncCentralStoreGit(storeRoot string) string {
 	}
 
 	if !remoteConfigured {
-		return info
+		return combineCentralSyncMessage(info, preSyncResult.successWarning())
 	}
 
 	// Check if there are unpushed commits (covers both fresh commits and
@@ -744,12 +761,12 @@ func syncCentralStoreGit(storeRoot string) string {
 	}
 	if !shouldPush {
 		_ = clearCentralSyncBlocked(storeRoot)
-		return info
+		return combineCentralSyncMessage(info, preSyncResult.successWarning())
 	}
 
 	if out, err := pushCentralStoreGit(storeRoot, remoteNames[0]); err == nil {
 		_ = clearCentralSyncBlocked(storeRoot)
-		return info
+		return combineCentralSyncMessage(info, preSyncResult.successWarning())
 	} else {
 		_, _ = out, err
 	}
@@ -759,16 +776,20 @@ func syncCentralStoreGit(storeRoot string) string {
 		// Rebase failed — abort to leave repo in a clean state.
 		_, _ = exec.Command("git", "-C", storeRoot, "rebase", "--abort").CombinedOutput()
 		msg := fmt.Sprintf("central sync blocked: git pull --rebase failed; aborted rebase to keep repo clean (%s)", strings.TrimSpace(string(out)))
+		msg = combineCentralSyncMessage(msg, preSyncResult.failureWarning())
 		_ = writeCentralSyncBlocked(storeRoot, msg)
 		return msg
 	}
 
 	if out, err := pushCentralStoreGit(storeRoot, remoteNames[0]); err != nil {
-		return fmt.Sprintf("git push failed after rebase (%s)", strings.TrimSpace(string(out)))
+		return combineCentralSyncMessage(
+			fmt.Sprintf("git push failed after rebase (%s)", strings.TrimSpace(string(out))),
+			preSyncResult.failureWarning(),
+		)
 	}
 	_ = clearCentralSyncBlocked(storeRoot)
 
-	return info
+	return combineCentralSyncMessage(info, preSyncResult.successWarning())
 }
 
 func centralStoreRemoteNames(storeRoot string) ([]string, error) {
@@ -778,6 +799,110 @@ func centralStoreRemoteNames(storeRoot string) ([]string, error) {
 	}
 	names := strings.Fields(strings.TrimSpace(string(out)))
 	return names, nil
+}
+
+func centralStoreHasWorkingTreeChanges(storeRoot string) (bool, error) {
+	out, err := exec.Command("git", "-C", storeRoot, "status", "--porcelain").CombinedOutput()
+	if err != nil {
+		return false, fmt.Errorf("%v (%s)", err, strings.TrimSpace(string(out)))
+	}
+	return strings.TrimSpace(string(out)) != "", nil
+}
+
+type centralPreSyncResult struct {
+	warning          string
+	includeOnSuccess bool
+}
+
+func (r centralPreSyncResult) successWarning() string {
+	if r.includeOnSuccess {
+		return r.warning
+	}
+	return ""
+}
+
+func (r centralPreSyncResult) failureWarning() string {
+	return r.warning
+}
+
+func preSyncCentralStoreRemote(storeRoot, defaultRemote string) centralPreSyncResult {
+	fetchRemote := defaultRemote
+	upstreamRemote, upstreamRef, hasUpstream, err := centralStoreCurrentUpstream(storeRoot)
+	if err != nil {
+		return centralPreSyncResult{
+			warning:          fmt.Sprintf("central pre-sync upstream check failed (%s)", err),
+			includeOnSuccess: true,
+		}
+	}
+	if upstreamRemote != "" {
+		fetchRemote = upstreamRemote
+	}
+
+	if out, err := exec.Command("git", "-C", storeRoot, "fetch", fetchRemote).CombinedOutput(); err != nil {
+		return centralPreSyncResult{
+			warning:          fmt.Sprintf("central pre-sync fetch failed (%s)", strings.TrimSpace(string(out))),
+			includeOnSuccess: true,
+		}
+	}
+	if !hasUpstream || upstreamRef == "" {
+		return centralPreSyncResult{}
+	}
+
+	headBefore, err := centralStoreHeadSHA(storeRoot)
+	if err != nil {
+		return centralPreSyncResult{
+			warning:          fmt.Sprintf("central pre-sync head check failed (%s)", err),
+			includeOnSuccess: true,
+		}
+	}
+
+	if out, err := exec.Command("git", "-C", storeRoot, "merge", "--ff-only", upstreamRef).CombinedOutput(); err != nil {
+		return centralPreSyncResult{
+			warning: fmt.Sprintf("central pre-sync ff-only merge skipped (%s)", strings.TrimSpace(string(out))),
+		}
+	}
+	headAfter, err := centralStoreHeadSHA(storeRoot)
+	if err != nil {
+		return centralPreSyncResult{
+			warning:          fmt.Sprintf("central pre-sync head check failed (%s)", err),
+			includeOnSuccess: true,
+		}
+	}
+	if headBefore == headAfter {
+		return centralPreSyncResult{}
+	}
+	return centralPreSyncResult{
+		warning:          "central: fast-forwarded from upstream before commit",
+		includeOnSuccess: true,
+	}
+}
+
+func centralStoreCurrentUpstream(storeRoot string) (remoteName, upstreamRef string, hasUpstream bool, err error) {
+	out, err := exec.Command("git", "-C", storeRoot, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}").CombinedOutput()
+	if err != nil {
+		if isNoUpstreamError(string(out)) {
+			return "", "", false, nil
+		}
+		return "", "", false, fmt.Errorf("%s", strings.TrimSpace(string(out)))
+	}
+
+	upstreamRef = strings.TrimSpace(string(out))
+	if upstreamRef == "" {
+		return "", "", false, nil
+	}
+
+	if idx := strings.Index(upstreamRef, "/"); idx > 0 {
+		remoteName = upstreamRef[:idx]
+	}
+	return remoteName, upstreamRef, true, nil
+}
+
+func centralStoreHeadSHA(storeRoot string) (string, error) {
+	out, err := exec.Command("git", "-C", storeRoot, "rev-parse", "HEAD").CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("%s", strings.TrimSpace(string(out)))
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 func pushCentralStoreGit(storeRoot, remoteName string) ([]byte, error) {
@@ -799,7 +924,55 @@ func pushCentralStoreGit(storeRoot, remoteName string) ([]byte, error) {
 }
 
 func isNoUpstreamError(out string) bool {
-	return strings.Contains(out, "has no upstream branch") || strings.Contains(out, "no upstream branch")
+	return strings.Contains(out, "has no upstream branch") ||
+		strings.Contains(out, "no upstream branch") ||
+		strings.Contains(out, "no upstream configured")
+}
+
+func combineCentralSyncMessage(info, warning string) string {
+	if info != "" && warning != "" {
+		return fmt.Sprintf("%s; %s", info, warning)
+	}
+	if info != "" {
+		return info
+	}
+	return warning
+}
+
+type centralSyncWarningTracker struct {
+	blocked map[string]string
+}
+
+func newCentralSyncWarningTracker() *centralSyncWarningTracker {
+	return &centralSyncWarningTracker{
+		blocked: map[string]string{},
+	}
+}
+
+func (t *centralSyncWarningTracker) record(storeRoot, msg string) []string {
+	const resolved = "central: sync resolved"
+
+	prevBlocked, hadPrevBlocked := t.blocked[storeRoot]
+	isBlocked := strings.HasPrefix(msg, "central sync blocked:")
+
+	switch {
+	case isBlocked:
+		if hadPrevBlocked && prevBlocked == msg {
+			return nil
+		}
+		t.blocked[storeRoot] = msg
+		return []string{msg}
+	case hadPrevBlocked:
+		delete(t.blocked, storeRoot)
+		if msg == "" {
+			return []string{resolved}
+		}
+		return []string{resolved, msg}
+	case msg != "":
+		return []string{msg}
+	default:
+		return nil
+	}
 }
 
 func centralSyncBlockedPath(storeRoot string) string {
