@@ -1136,11 +1136,15 @@ func TestSyncCentralStoreGitAbortsRebaseOnConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// syncCentralStoreGit should commit, fail to push, fail to rebase, and abort cleanly.
+	// syncCentralStoreGit should attempt pre-sync, then commit, fail to push,
+	// fail to rebase, and abort cleanly.
 	result := syncCentralStoreGit(store)
 
 	if !strings.Contains(result, "aborted rebase") {
 		t.Fatalf("expected aborted rebase message, got: %q", result)
+	}
+	if !strings.Contains(result, "central pre-sync ff-only merge skipped") {
+		t.Fatalf("expected blocked message to retain pre-sync context, got: %q", result)
 	}
 
 	// Verify repo is NOT left in a mid-rebase state.
@@ -1161,6 +1165,9 @@ func TestSyncCentralStoreGitAbortsRebaseOnConflict(t *testing.T) {
 	}
 	if blocked := readCentralSyncBlocked(store); !strings.Contains(blocked, "central sync blocked:") {
 		t.Fatalf("expected persisted blocked sync warning, got %q", blocked)
+	}
+	if blocked := readCentralSyncBlocked(store); !strings.Contains(blocked, "central pre-sync ff-only merge skipped") {
+		t.Fatalf("expected persisted blocked warning to retain pre-sync context, got %q", blocked)
 	}
 
 	// Second cycle: the daemon should not retry the same conflict. It should
@@ -1228,6 +1235,387 @@ func TestSyncCentralStoreGitPushesWithoutConfiguredUpstream(t *testing.T) {
 	}
 	if strings.TrimSpace(string(upstreamOut)) != "origin/"+branch {
 		t.Fatalf("expected origin/%s upstream, got %q", branch, string(upstreamOut))
+	}
+}
+
+func TestSyncCentralStoreGitFetchesBeforeCommitOnTrackedBranch(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	runGit := func(t *testing.T, repo string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git -C %s %v failed: %v\n%s", repo, args, err, string(out))
+		}
+	}
+
+	remote := filepath.Join(t.TempDir(), "remote.git")
+	runGit(t, ".", "init", "--bare", remote)
+
+	store := filepath.Join(t.TempDir(), "store")
+	runGit(t, ".", "clone", remote, store)
+	runGit(t, store, "config", "user.email", "tkt@example.com")
+	runGit(t, store, "config", "user.name", "tkt")
+	runGit(t, store, "checkout", "-b", "syncbranch")
+
+	ticketDir := filepath.Join(store, "demo")
+	if err := os.MkdirAll(ticketDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ticketDir, "seed.md"), []byte("---\nid: seed\n---\n# Seed\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, store, "add", "-A")
+	runGit(t, store, "commit", "-m", "seed")
+	runGit(t, store, "push", "-u", "origin", "syncbranch")
+	runGit(t, remote, "symbolic-ref", "HEAD", "refs/heads/syncbranch")
+
+	store2 := filepath.Join(t.TempDir(), "store2")
+	runGit(t, ".", "clone", remote, store2)
+	runGit(t, store2, "config", "user.email", "tkt@example.com")
+	runGit(t, store2, "config", "user.name", "tkt")
+	if err := os.WriteFile(filepath.Join(store2, "demo", "remote.md"), []byte("---\nid: remote\n---\n# Remote\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, store2, "add", "-A")
+	runGit(t, store2, "commit", "-m", "remote")
+	runGit(t, store2, "push")
+
+	if err := os.WriteFile(filepath.Join(ticketDir, "local.md"), []byte("---\nid: local\n---\n# Local\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result := syncCentralStoreGit(store)
+	if !strings.Contains(result, "central: committed") {
+		t.Fatalf("expected sync commit info, got %q", result)
+	}
+	if !strings.Contains(result, "central: fast-forwarded from upstream before commit") {
+		t.Fatalf("expected pre-sync fast-forward message, got %q", result)
+	}
+
+	verify := filepath.Join(t.TempDir(), "verify")
+	runGit(t, ".", "clone", remote, verify)
+	if _, err := os.Stat(filepath.Join(verify, "demo", "remote.md")); err != nil {
+		t.Fatalf("expected remote change to be present after sync: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(verify, "demo", "local.md")); err != nil {
+		t.Fatalf("expected local change to be pushed after sync: %v", err)
+	}
+
+	upstreamOut, err := exec.Command("git", "-C", store, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}").CombinedOutput()
+	if err != nil {
+		t.Fatalf("expected upstream to remain configured: %v\n%s", err, string(upstreamOut))
+	}
+	if strings.TrimSpace(string(upstreamOut)) != "origin/syncbranch" {
+		t.Fatalf("expected origin/syncbranch upstream, got %q", upstreamOut)
+	}
+}
+
+func TestSyncCentralStoreGitDoesNotReportFastForwardWhenAlreadyUpToDate(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	runGit := func(t *testing.T, repo string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git -C %s %v failed: %v\n%s", repo, args, err, string(out))
+		}
+	}
+
+	remote := filepath.Join(t.TempDir(), "remote.git")
+	runGit(t, ".", "init", "--bare", remote)
+
+	store := filepath.Join(t.TempDir(), "store")
+	runGit(t, ".", "clone", remote, store)
+	runGit(t, store, "config", "user.email", "tkt@example.com")
+	runGit(t, store, "config", "user.name", "tkt")
+
+	ticketDir := filepath.Join(store, "demo")
+	if err := os.MkdirAll(ticketDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ticketDir, "seed.md"), []byte("---\nid: seed\n---\n# Seed\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, store, "add", "-A")
+	runGit(t, store, "commit", "-m", "seed")
+	runGit(t, store, "push", "-u", "origin", "main")
+
+	if err := os.WriteFile(filepath.Join(ticketDir, "local.md"), []byte("---\nid: local\n---\n# Local\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result := syncCentralStoreGit(store)
+	if !strings.Contains(result, "central: committed") {
+		t.Fatalf("expected sync commit info, got %q", result)
+	}
+	if strings.Contains(result, "central: fast-forwarded from upstream before commit") {
+		t.Fatalf("expected no fast-forward message when upstream is already up to date, got %q", result)
+	}
+}
+
+func TestSyncCentralStoreGitSuppressesPreSyncWarningAfterSuccessfulRecovery(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	runGit := func(t *testing.T, repo string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git -C %s %v failed: %v\n%s", repo, args, err, string(out))
+		}
+	}
+
+	remote := filepath.Join(t.TempDir(), "remote.git")
+	runGit(t, ".", "init", "--bare", remote)
+
+	store := filepath.Join(t.TempDir(), "store")
+	runGit(t, ".", "clone", remote, store)
+	runGit(t, store, "config", "user.email", "tkt@example.com")
+	runGit(t, store, "config", "user.name", "tkt")
+
+	ticketDir := filepath.Join(store, "demo")
+	if err := os.MkdirAll(ticketDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	seedPath := filepath.Join(ticketDir, "t1.md")
+	seedBody := "---\nid: t1\n---\n# T1\nalpha\none\ntwo\nthree\nfour\nfive\nbeta\n"
+	if err := os.WriteFile(seedPath, []byte(seedBody), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, store, "add", "-A")
+	runGit(t, store, "commit", "-m", "seed")
+	runGit(t, store, "push")
+
+	store2 := filepath.Join(t.TempDir(), "store2")
+	runGit(t, ".", "clone", remote, store2)
+	runGit(t, store2, "config", "user.email", "tkt@example.com")
+	runGit(t, store2, "config", "user.name", "tkt")
+	remotePath := filepath.Join(store2, "demo", "t1.md")
+	remoteBody := strings.Replace(seedBody, "beta\n", "beta remote\n", 1)
+	if err := os.WriteFile(remotePath, []byte(remoteBody), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, store2, "add", "-A")
+	runGit(t, store2, "commit", "-m", "remote edit")
+	runGit(t, store2, "push")
+
+	localBody := strings.Replace(seedBody, "alpha\n", "alpha local\n", 1)
+	if err := os.WriteFile(seedPath, []byte(localBody), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result := syncCentralStoreGit(store)
+	if !strings.Contains(result, "central: committed") {
+		t.Fatalf("expected sync commit info, got %q", result)
+	}
+	if strings.Contains(result, "central pre-sync ff-only merge skipped") {
+		t.Fatalf("expected recoverable pre-sync warning to be suppressed on success, got %q", result)
+	}
+	if blocked := readCentralSyncBlocked(store); blocked != "" {
+		t.Fatalf("expected no blocked sync marker after successful recovery, got %q", blocked)
+	}
+
+	verify := filepath.Join(t.TempDir(), "verify")
+	runGit(t, ".", "clone", remote, verify)
+	merged, err := os.ReadFile(filepath.Join(verify, "demo", "t1.md"))
+	if err != nil {
+		t.Fatalf("read merged ticket from remote: %v", err)
+	}
+	mergedText := string(merged)
+	if !strings.Contains(mergedText, "alpha local") || !strings.Contains(mergedText, "beta remote") {
+		t.Fatalf("expected remote to contain both recovered changes, got %q", mergedText)
+	}
+}
+
+func TestSyncCentralStoreGitDoesNotFetchWhenNoLocalChanges(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	runGit := func(t *testing.T, repo string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git -C %s %v failed: %v\n%s", repo, args, err, string(out))
+		}
+	}
+
+	remote := filepath.Join(t.TempDir(), "remote.git")
+	runGit(t, ".", "init", "--bare", remote)
+
+	store := filepath.Join(t.TempDir(), "store")
+	runGit(t, ".", "clone", remote, store)
+	runGit(t, store, "config", "user.email", "tkt@example.com")
+	runGit(t, store, "config", "user.name", "tkt")
+
+	ticketDir := filepath.Join(store, "demo")
+	if err := os.MkdirAll(ticketDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ticketDir, "seed.md"), []byte("---\nid: seed\n---\n# Seed\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, store, "add", "-A")
+	runGit(t, store, "commit", "-m", "seed")
+	runGit(t, store, "push")
+
+	store2 := filepath.Join(t.TempDir(), "store2")
+	runGit(t, ".", "clone", remote, store2)
+	runGit(t, store2, "config", "user.email", "tkt@example.com")
+	runGit(t, store2, "config", "user.name", "tkt")
+	if err := os.WriteFile(filepath.Join(store2, "demo", "remote.md"), []byte("---\nid: remote\n---\n# Remote\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, store2, "add", "-A")
+	runGit(t, store2, "commit", "-m", "remote")
+	runGit(t, store2, "push")
+
+	result := syncCentralStoreGit(store)
+	if result != "" {
+		t.Fatalf("expected no sync output when there are no local changes, got %q", result)
+	}
+	if _, err := os.Stat(filepath.Join(store, "demo", "remote.md")); err == nil {
+		t.Fatal("expected clean local repo to remain behind remote when there are no local changes")
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("stat remote file: %v", err)
+	}
+}
+
+func TestCentralSyncWarningTrackerSuppressesRepeatedBlockedMessage(t *testing.T) {
+	tracker := newCentralSyncWarningTracker()
+	root := "/tmp/central"
+	msg := "central sync blocked: git pull --rebase failed"
+
+	got := tracker.record(root, msg)
+	if len(got) != 1 || got[0] != msg {
+		t.Fatalf("expected first blocked message to be emitted, got %v", got)
+	}
+
+	got = tracker.record(root, msg)
+	if len(got) != 0 {
+		t.Fatalf("expected repeated blocked message to be suppressed, got %v", got)
+	}
+
+	newMsg := "central sync blocked: git push failed after rebase"
+	got = tracker.record(root, newMsg)
+	if len(got) != 1 || got[0] != newMsg {
+		t.Fatalf("expected changed blocked message to be emitted, got %v", got)
+	}
+}
+
+func TestCentralSyncWarningTrackerEmitsResolvedOnce(t *testing.T) {
+	tracker := newCentralSyncWarningTracker()
+	root := "/tmp/central"
+
+	_ = tracker.record(root, "central sync blocked: git pull --rebase failed")
+
+	got := tracker.record(root, "")
+	if len(got) != 1 || got[0] != "central: sync resolved" {
+		t.Fatalf("expected resolved message after blocked state clears, got %v", got)
+	}
+
+	got = tracker.record(root, "")
+	if len(got) != 0 {
+		t.Fatalf("expected resolved message to emit only once, got %v", got)
+	}
+}
+
+func TestCentralSyncWarningTrackerEmitsResolvedAndCurrentMessage(t *testing.T) {
+	tracker := newCentralSyncWarningTracker()
+	root := "/tmp/central"
+
+	_ = tracker.record(root, "central sync blocked: git pull --rebase failed")
+
+	got := tracker.record(root, "central: committed (tkt: sync demo-1)")
+	if len(got) != 2 {
+		t.Fatalf("expected resolved + current message, got %v", got)
+	}
+	if got[0] != "central: sync resolved" {
+		t.Fatalf("expected resolved message first, got %v", got)
+	}
+	if got[1] != "central: committed (tkt: sync demo-1)" {
+		t.Fatalf("expected current message second, got %v", got)
+	}
+}
+
+func TestServeRunCentralSyncBlockedLoggedOnceForMultipleProjects(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	runGit := func(repo string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git -C %s %v failed: %v\n%s", repo, args, err, string(out))
+		}
+	}
+
+	makeRepo := func(name string) string {
+		t.Helper()
+		dir := filepath.Join(t.TempDir(), name)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatalf("mkdir repo %s: %v", name, err)
+		}
+		runGit(dir, "init")
+		runGit(dir, "config", "user.email", "tkt@example.com")
+		runGit(dir, "config", "user.name", "tkt")
+		if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte(name+"\n"), 0644); err != nil {
+			t.Fatalf("write repo seed %s: %v", name, err)
+		}
+		runGit(dir, "add", "a.txt")
+		runGit(dir, "commit", "-m", "initial")
+		return dir
+	}
+
+	repoA := makeRepo("repoA")
+	repoB := makeRepo("repoB")
+
+	centralRoot := filepath.Join(home, ".tickets")
+	if err := os.MkdirAll(centralRoot, 0755); err != nil {
+		t.Fatalf("mkdir central root: %v", err)
+	}
+	runGit(centralRoot, "init")
+	runGit(centralRoot, "config", "user.email", "tkt@example.com")
+	runGit(centralRoot, "config", "user.name", "tkt")
+	runGit(centralRoot, "remote", "add", "origin", "https://example.invalid/repo.git")
+	if err := writeCentralSyncBlocked(centralRoot, "central sync blocked: test blocked state"); err != nil {
+		t.Fatalf("write blocked marker: %v", err)
+	}
+
+	cfg := project.Config{
+		Projects: map[string]project.ProjectConfig{
+			"repoA": {
+				Path:         repoA,
+				Store:        "central",
+				RegisteredAt: time.Now().UTC().Add(-5 * time.Minute).Format(time.RFC3339),
+			},
+			"repoB": {
+				Path:         repoB,
+				Store:        "central",
+				RegisteredAt: time.Now().UTC().Add(-5 * time.Minute).Format(time.RFC3339),
+			},
+		},
+	}
+	if err := project.Save(cfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	_, stderr, err := runCmd(t, "", "serve", "run", "--once")
+	if err != nil {
+		t.Fatalf("serve run --once: %v", err)
+	}
+	if strings.Count(stderr, "central sync blocked: test blocked state") != 1 {
+		t.Fatalf("expected blocked message once, got stderr:\n%s", stderr)
 	}
 }
 
