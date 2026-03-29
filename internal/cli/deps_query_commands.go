@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"sort"
 	"strings"
@@ -554,7 +555,13 @@ func runWorkflow(ctx context, args []string) error {
 		return fmt.Errorf("usage: tkt workflow")
 	}
 
-	workflow, err := project.LoadWorkflow()
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	projectRoot := project.DetectProjectPath(cwd)
+
+	workflow, err := project.LoadWorkflow(projectRoot)
 	if err != nil {
 		return err
 	}
@@ -567,7 +574,8 @@ func runWorkflow(ctx context, args []string) error {
 	_, _ = fmt.Fprintln(ctx.stdout)
 	_, _ = fmt.Fprintln(ctx.stdout)
 	if workflow.UsingDefault {
-		_, _ = fmt.Fprintf(ctx.stdout, "(Source: embedded default; create %s or run `tkt init` to create it, then edit to customize)\n", workflow.PathDisplay)
+		projPath := project.ProjectWorkflowPath(projectRoot)
+		_, _ = fmt.Fprintf(ctx.stdout, "(Source: embedded default; create %s or %s to customize)\n", workflow.PathDisplay, projPath)
 		return nil
 	}
 	_, _ = fmt.Fprintf(ctx.stdout, "(Source: %s - edit to customize)\n", workflow.PathDisplay)

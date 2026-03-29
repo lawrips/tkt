@@ -26,8 +26,9 @@ var (
 			Padding(1, 2)
 )
 
-// contextualHelpBar renders a single-line help bar from the given bindings,
-// truncating from the right if the terminal is too narrow.
+// contextualHelpBar renders a help bar from the given bindings, wrapping onto
+// a second line when the terminal is too narrow for a single line. Any
+// remaining bindings that don't fit on two lines are truncated with "…".
 func contextualHelpBar(bindings []key.Binding, width int) string {
 	sep := "  "
 	var parts []string
@@ -36,23 +37,38 @@ func contextualHelpBar(bindings []key.Binding, width int) string {
 		parts = append(parts, helpKeyStyle.Render(h.Key)+helpDescStyle.Render(":"+h.Desc))
 	}
 	line := strings.Join(parts, sep)
-	// Truncate if wider than terminal.
-	if lipgloss.Width(line) > width && width > 3 {
-		// Rebuild, adding parts until we'd exceed width.
-		line = ""
-		for i, p := range parts {
-			candidate := p
-			if i > 0 {
-				candidate = sep + p
+	// Everything fits on one line.
+	if lipgloss.Width(line) <= width || width <= 3 {
+		return line
+	}
+	// Build up to two rows.
+	var row1, row2 string
+	onSecondRow := false
+	for i, p := range parts {
+		candidate := p
+		if (!onSecondRow && i > 0) || (onSecondRow && row2 != "") {
+			candidate = sep + p
+		}
+		if !onSecondRow {
+			if lipgloss.Width(row1+candidate) > width {
+				// Overflow to second row.
+				onSecondRow = true
+				row2 = p
+			} else {
+				row1 += candidate
 			}
-			if lipgloss.Width(line+candidate) > width-3 {
-				line += helpDescStyle.Render("…")
+		} else {
+			if lipgloss.Width(row2+candidate) > width-3 {
+				row2 += helpDescStyle.Render("…")
 				break
 			}
-			line += candidate
+			row2 += candidate
 		}
 	}
-	return line
+	if row2 == "" {
+		return row1
+	}
+	return row1 + "\n" + row2
 }
 
 // boardHints returns the key bindings shown in the board view help bar.

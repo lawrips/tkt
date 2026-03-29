@@ -44,7 +44,7 @@ tkt init
 ```bash
 tkt help              # see all commands
 tkt tui               # open the terminal UI
-tkt workflow          # user-editable workflow guide from ~/.tkt/workflow.md
+tkt workflow          # user-editable workflow guide (.tkt/workflow.md or ~/.tkt/workflow.md)
 ```
 
 There are CLI commands for creating and editing tickets, but I just ask Claude / Codex to do it.

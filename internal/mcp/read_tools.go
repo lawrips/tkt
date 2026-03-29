@@ -219,7 +219,7 @@ func (s *Server) handleTimeline(_ stdctx.Context, req mcplib.CallToolRequest) (*
 }
 
 func (s *Server) handleWorkflow(_ stdctx.Context, _ mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
-	workflow, err := project.LoadWorkflow()
+	workflow, err := project.LoadWorkflow(s.projectRoot)
 	if err != nil {
 		return errResult(fmt.Sprintf("load workflow: %v", err))
 	}

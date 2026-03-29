@@ -33,9 +33,10 @@ contents to the user's agent instructions file
 
 Example: `tkt agent-instructions >> ~/.claude/CLAUDE.md`
 
-Workflow conventions themselves are read from `~/.tkt/workflow.md` when agents run
-`tkt workflow`. Users can edit that file directly to customize lifecycle states,
-commit conventions, and workflow rules.
+Workflow conventions are read via `tkt workflow`. tkt checks for a project-level
+override at `<project-root>/.tkt/workflow.md` first, then falls back to the global
+`~/.tkt/workflow.md`, then the embedded default. Users can edit either file to
+customize lifecycle states, commit conventions, and workflow rules.
 
 If tkt instructions are already present (look for a `## tkt` heading), skip this step.
 Preserve any existing content in the file.
