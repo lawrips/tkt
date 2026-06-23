@@ -907,17 +907,11 @@ func dirExists(path string) bool {
 }
 
 func dirWritable(path string) bool {
-	if !dirExists(path) {
+	info, err := os.Stat(path)
+	if err != nil || !info.IsDir() {
 		return false
 	}
-	tmp, err := os.CreateTemp(path, ".tkt-write-check-*")
-	if err != nil {
-		return false
-	}
-	name := tmp.Name()
-	_ = tmp.Close()
-	_ = os.Remove(name)
-	return true
+	return info.Mode().Perm()&0222 != 0
 }
 
 func displayPath(path string) string {

@@ -336,7 +336,10 @@ const webDetail = `Subcommands:
   tkt web logs                Show recent web log output
 
 The web server binds to localhost by default and uses a per-launch token.
-It manages only the web process, not the watch/sync service.`
+It can run before tkt init to show setup guidance and doctor-style health.
+It manages only the web process, not the watch/sync service, and does not run
+sync, push, pull, fetch, arbitrary shell commands, or arbitrary filesystem
+browsing.`
 
 func setDetail(commands map[string]command, name, detail string) {
 	cmd := commands[name]

@@ -95,6 +95,9 @@ func (s *Server) URLFor(listener net.Listener) string {
 	if host == "" || host == "::" || host == "[::]" {
 		host = "127.0.0.1"
 	}
+	if strings.Contains(host, ":") && !strings.HasPrefix(host, "[") {
+		host = "[" + host + "]"
+	}
 	return fmt.Sprintf("http://%s:%s/?token=%s", host, port, s.token)
 }
 

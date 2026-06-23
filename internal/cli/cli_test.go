@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -176,6 +177,21 @@ func TestWebStatePathsSeparateFromServe(t *testing.T) {
 	}
 	if webPID == servePID {
 		t.Fatalf("web pid path should differ from serve pid path")
+	}
+}
+
+func TestWriteWebStateUsesOwnerOnlyPermissions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "web.json")
+	err := writeWebState(path, webState{PID: 123, URL: "http://127.0.0.1:1/?token=secret", Token: "secret"})
+	if err != nil {
+		t.Fatalf("write web state: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat web state: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0600 {
+		t.Fatalf("web state permissions = %v, want 0600", got)
 	}
 }
 

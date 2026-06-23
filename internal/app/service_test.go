@@ -30,6 +30,23 @@ func TestProjectsReportsUninitializedDirectory(t *testing.T) {
 	}
 }
 
+func TestDirWritableUsesDirectoryMode(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if !dirWritable(dir) {
+		t.Fatalf("expected writable mode to be reported writable")
+	}
+	if err := os.Chmod(dir, 0555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0755) })
+	if dirWritable(dir) {
+		t.Fatalf("expected read-only mode to be reported not writable")
+	}
+}
+
 func TestListTicketsReturnsParseDiagnostics(t *testing.T) {
 	home, repo, ticketDir := setupProject(t)
 	_ = home

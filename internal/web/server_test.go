@@ -3,6 +3,8 @@ package web
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -25,6 +27,20 @@ func TestGenerateToken(t *testing.T) {
 	}
 }
 
+func TestURLForIPv6Loopback(t *testing.T) {
+	server, err := New(Options{Token: "secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener := fakeListener{addr: &net.TCPAddr{IP: net.ParseIP("::1"), Port: 4321}}
+
+	got := server.URLFor(listener)
+
+	if got != "http://[::1]:4321/?token=secret" {
+		t.Fatalf("unexpected IPv6 URL: %s", got)
+	}
+}
+
 func TestAPITokenRequired(t *testing.T) {
 	server, err := New(Options{Token: "secret"})
 	if err != nil {
@@ -43,6 +59,22 @@ func TestAPITokenRequired(t *testing.T) {
 	}
 }
 
+func TestAPIInvalidTokenRejected(t *testing.T) {
+	server, err := New(Options{Token: "secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/session", nil)
+	req.Header.Set("Authorization", "Bearer wrong")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected unauthorized, got %d", rec.Code)
+	}
+}
+
 func TestAPIHeaderTokenAccepted(t *testing.T) {
 	server, err := New(Options{Token: "secret"})
 	if err != nil {
@@ -56,6 +88,22 @@ func TestAPIHeaderTokenAccepted(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected ok, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPrivilegedAPIRoutesAreAbsent(t *testing.T) {
+	server, err := New(Options{Token: "secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/api/shell", "/api/git/push", "/api/git/pull", "/api/git/fetch", "/api/serve/start", "/api/serve/stop"} {
+		req := httptest.NewRequest(http.MethodPost, path, nil)
+		req.Header.Set("Authorization", "Bearer secret")
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s expected not found, got %d: %s", path, rec.Code, rec.Body.String())
+		}
 	}
 }
 
@@ -161,6 +209,35 @@ func TestHealthEndpointRejectsMutation(t *testing.T) {
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("expected method not allowed, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateTicketViaAPI(t *testing.T) {
+	home, repo, ticketDir := setupWebProject(t)
+	server, err := New(Options{Token: "secret", CWD: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := bytes.NewReader([]byte(`{"source":"test","id":"c-created","title":"Created from web","type":"feature","priority":1}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/demo/tickets", body)
+	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected created, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(ticketDir, "c-created.md")); err != nil {
+		t.Fatalf("expected ticket file: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(home, ".tkt", "state", "demo", "mutations.jsonl"))
+	if err != nil {
+		t.Fatalf("read mutation log: %v", err)
+	}
+	if !strings.Contains(string(raw), `"operation":"create"`) || !strings.Contains(string(raw), `"source":"test"`) {
+		t.Fatalf("mutation log missing create/source: %s", string(raw))
 	}
 }
 
@@ -325,3 +402,11 @@ func writeWebTicket(t *testing.T, dir, id, title string) {
 		t.Fatalf("save ticket: %v", err)
 	}
 }
+
+type fakeListener struct {
+	addr net.Addr
+}
+
+func (f fakeListener) Accept() (net.Conn, error) { return nil, errors.New("not implemented") }
+func (f fakeListener) Close() error              { return nil }
+func (f fakeListener) Addr() net.Addr            { return f.addr }

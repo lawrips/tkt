@@ -150,6 +150,20 @@ Returns configured projects:
 - current/resolved flag
 - parse/read warning count when known
 
+### `GET /api/health`
+
+Returns the shared doctor check model:
+
+- overall status
+- pass/warn/fail summary
+- resolved project summary
+- grouped setup checks for global config, current project, sync/watch, and agent instructions
+- remediation text and optional copy-paste commands
+
+The endpoint performs safe local checks only. It does not start or stop services,
+run shell commands outside bounded local git status/remote inspection, or run
+git fetch/pull/push.
+
 ### `GET /api/projects/{project}/tickets`
 
 Query params:

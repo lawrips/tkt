@@ -11,6 +11,8 @@ These are some additions that have been helpful for me:
 - **TUI** — terminal UI for viewing, basic editing (status, priority etc) and monitoring (Bubble Tea)
 - **Central ticket store** — tickets live in `~/.tickets`, keeping working directories and commit history clean
 - **Service mode** — pushes ticket changes to the central repo, auto-closes tickets from commits and maintains an append-only journal, simplifying manual bookkeeping
+- **Doctor** — safe local setup checks for config, project registration, central store, workflow, serve/watch, and agent instructions
+- **Web control plane** — local browser UI for browsing, editing, and checking ticket health
 - **Composite views** — epic-view, context, dashboard, progress — all computed over the same underlying data
 - **MCP server** — agents interact through typed tool schemas instead of CLI string parsing, to improve command use and source attribution
 
@@ -43,7 +45,9 @@ tkt init
 
 ```bash
 tkt help              # see all commands
+tkt doctor            # audit setup health
 tkt tui               # open the terminal UI
+tkt web               # open the local browser workbench
 tkt workflow          # user-editable workflow guide from ~/.tkt/workflow.md
 ```
 
@@ -90,6 +94,30 @@ When it finds a match, it appends an entry to an append-only journal linking the
 The journal lives at `~/.tkt/state/<project>/journal.log`. It's the source for commit-linked views like `progress` and `context`. Journal timestamps also enable time-spent tracking via `tkt lifecycle <id>`, which shows status transitions and durations.
 
 Manage the daemon with `tkt serve start`, `tkt serve stop`, `tkt serve status`, and `tkt serve logs`.
+
+### Doctor
+
+`tkt doctor` audits local setup without changing files, starting services, or running credentialed git operations. It checks global config, current project resolution, ticket store health, workflow guidance, central-store git state, serve/watch status, and known agent instruction files. Use `tkt doctor --json` for agent-readable output.
+
+Doctor gives copy-paste remediation commands, but it does not apply fixes itself.
+
+### Web Control Plane
+
+`tkt web` starts a localhost-only browser workbench from the same Go binary. It serves embedded HTML/CSS/JS, generates a per-launch token, and exposes structured API routes for configured projects and tickets.
+
+Use it to browse tickets, inspect context, edit structured fields, add notes, manage deps/links, and view the same setup health surfaced by `tkt doctor`.
+
+The web process is separate from `tkt serve`. It does not run sync, push, pull, fetch, arbitrary shell commands, arbitrary filesystem browsing, or start/stop the serve/watch process. It can run before `tkt init`; in an uninitialized repo it shows setup guidance and any configured projects it can safely read.
+
+Commands:
+
+```bash
+tkt web              # foreground server, prints an authenticated localhost URL
+tkt web start        # background web process
+tkt web status       # web process status only
+tkt web stop         # stops only the web process
+tkt web logs         # web process logs only
+```
 
 ### Composite Views
 
