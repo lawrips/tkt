@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/url"
@@ -77,6 +78,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.serveAPI(w, r)
 		return
 	}
+	if strings.HasPrefix(r.URL.Path, "/assets/") {
+		s.serveAsset(w, r)
+		return
+	}
 	s.serveIndex(w, r)
 }
 
@@ -93,27 +98,22 @@ func (s *Server) URLFor(listener net.Listener) string {
 }
 
 func (s *Server) serveIndex(w http.ResponseWriter, _ *http.Request) {
+	raw, err := assets.ReadFile("assets/index.html")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", err.Error(), nil)
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(`<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>TKT Web</title>
-  <style>
-    body { font-family: system-ui, sans-serif; margin: 2rem; color: #17202a; background: #f7f8fa; }
-    main { max-width: 760px; margin: 0 auto; background: white; border: 1px solid #d9dee7; padding: 1.5rem; }
-    code { background: #eef1f5; padding: 0.1rem 0.3rem; }
-  </style>
-</head>
-<body>
-  <main>
-    <h1>TKT Web</h1>
-    <p>The local web control plane is running.</p>
-    <p>API health: <code>/api/session</code></p>
-  </main>
-</body>
-</html>`))
+	_, _ = w.Write(raw)
+}
+
+func (s *Server) serveAsset(w http.ResponseWriter, r *http.Request) {
+	sub, err := fs.Sub(assets, "assets")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", err.Error(), nil)
+		return
+	}
+	http.StripPrefix("/assets/", http.FileServer(http.FS(sub))).ServeHTTP(w, r)
 }
 
 func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {

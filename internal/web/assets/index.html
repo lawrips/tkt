@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TKT Web</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+  <div id="app" class="app-shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">TKT Web</p>
+        <h1>Ticket Workbench</h1>
+      </div>
+      <div id="session-status" class="status-pill">Starting</div>
+    </header>
+    <main class="workspace">
+      <aside class="sidebar" aria-label="Projects">
+        <div class="panel-header">
+          <h2>Projects</h2>
+          <button id="refresh-projects" class="icon-button" type="button" title="Refresh">Refresh</button>
+        </div>
+        <div id="setup-panel" class="setup-panel"></div>
+        <nav id="project-list" class="project-list"></nav>
+      </aside>
+      <section class="ticket-column" aria-label="Tickets">
+        <div class="panel-header">
+          <div>
+            <h2 id="ticket-heading">Tickets</h2>
+            <p id="ticket-count" class="muted">No project selected</p>
+          </div>
+        </div>
+        <form id="filters" class="filters">
+          <input id="search" type="search" placeholder="Search id or title" autocomplete="off">
+          <select id="status">
+            <option value="">All status</option>
+            <option value="open">Open</option>
+            <option value="in_progress">In progress</option>
+            <option value="needs_testing">Needs testing</option>
+            <option value="closed">Closed</option>
+          </select>
+          <select id="type">
+            <option value="">All type</option>
+            <option value="bug">Bug</option>
+            <option value="feature">Feature</option>
+            <option value="task">Task</option>
+            <option value="epic">Epic</option>
+            <option value="chore">Chore</option>
+          </select>
+          <select id="state-filter">
+            <option value="">Any readiness</option>
+            <option value="ready">Ready</option>
+            <option value="blocked">Blocked</option>
+          </select>
+        </form>
+        <div id="diagnostics" class="diagnostics"></div>
+        <div id="ticket-list" class="ticket-list"></div>
+      </section>
+      <section class="detail-column" aria-label="Ticket detail">
+        <div id="ticket-detail" class="ticket-detail empty-state">
+          Select a ticket to inspect its durable context.
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="/assets/app.js"></script>
+</body>
+</html>

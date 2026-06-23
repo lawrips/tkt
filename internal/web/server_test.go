@@ -59,6 +59,34 @@ func TestAPIHeaderTokenAccepted(t *testing.T) {
 	}
 }
 
+func TestServesEmbeddedAppAssets(t *testing.T) {
+	server, err := New(Options{Token: "secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, path := range []string{"/", "/assets/styles.css", "/assets/app.js"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s expected ok, got %d: %s", path, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestEmbeddedAppDoesNotLoadExternalAssets(t *testing.T) {
+	index, err := assets.ReadFile("assets/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, disallowed := range []string{"https://", "http://", "//cdn", "fonts.googleapis"} {
+		if strings.Contains(string(index), disallowed) {
+			t.Fatalf("index contains external asset reference %q", disallowed)
+		}
+	}
+}
+
 func TestTicketListReturnsParseDiagnostics(t *testing.T) {
 	_, repo, ticketDir := setupWebProject(t)
 	writeWebTicket(t, ticketDir, "c-good", "Good")
