@@ -87,6 +87,18 @@ func TestEmbeddedAppDoesNotLoadExternalAssets(t *testing.T) {
 	}
 }
 
+func TestEmbeddedAppIncludesEditingControls(t *testing.T) {
+	appJS, err := assets.ReadFile("assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"edit-form", "note-form", "dep-input", "link-input", "stale_revision"} {
+		if !strings.Contains(string(appJS), required) {
+			t.Fatalf("app.js missing editing marker %q", required)
+		}
+	}
+}
+
 func TestTicketListReturnsParseDiagnostics(t *testing.T) {
 	_, repo, ticketDir := setupWebProject(t)
 	writeWebTicket(t, ticketDir, "c-good", "Good")

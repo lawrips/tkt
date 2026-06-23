@@ -7,6 +7,7 @@
     tickets: [],
     selectedTicket: "",
     detail: null,
+    editMessage: "",
     filters: {
       search: "",
       status: "",
@@ -57,9 +58,18 @@
     const payload = text ? JSON.parse(text) : null;
     if (!response.ok) {
       const error = payload && payload.error ? payload.error : { message: response.statusText };
-      throw new Error(error.message || "Request failed");
+      const failure = new Error(error.message || "Request failed");
+      failure.code = error.code || "";
+      throw failure;
     }
     return payload;
+  }
+
+  async function mutate(path, payload, options) {
+    return api(path, {
+      method: options && options.method ? options.method : "POST",
+      body: payload == null ? undefined : JSON.stringify(payload)
+    });
   }
 
   function escapeHTML(value) {
@@ -241,6 +251,10 @@
         ${section("Description", detail.description, true)}
         ${section("Design", detail.design, true)}
         ${section("Acceptance Criteria", detail.acceptance_criteria, true)}
+        ${editSection(detail)}
+        ${noteSection()}
+        ${edgeSection("Dependency ticket id", "dep-input", "Add dependency")}
+        ${edgeSection("Linked ticket id", "link-input", "Add link")}
         ${relatedSection("Dependencies", detail.deps)}
         ${relatedSection("Links", detail.links)}
         ${childrenSection(detail.children)}
@@ -248,6 +262,101 @@
         ${otherSections(detail.other_sections)}
       </div>
     `;
+  }
+
+  function editSection(detail) {
+    return `
+      <section class="detail-section full">
+        <div class="section-heading-row">
+          <h3>Edit Ticket</h3>
+          <span class="muted">Structured fields only</span>
+        </div>
+        ${state.editMessage ? notice(escapeHTML(state.editMessage), state.editMessage.indexOf("saved") >= 0 ? "" : "warning") : ""}
+        <form id="edit-form" class="edit-form">
+          <label>
+            <span>Title</span>
+            <input name="title" value="${escapeHTML(detail.title || "")}">
+          </label>
+          <label>
+            <span>Status</span>
+            <select name="status">
+              ${option("open", detail.status)}
+              ${option("in_progress", detail.status)}
+              ${option("needs_testing", detail.status)}
+              ${option("closed", detail.status)}
+            </select>
+          </label>
+          <label>
+            <span>Type</span>
+            <select name="type">
+              ${option("bug", detail.type)}
+              ${option("feature", detail.type)}
+              ${option("task", detail.type)}
+              ${option("epic", detail.type)}
+              ${option("chore", detail.type)}
+            </select>
+          </label>
+          <label>
+            <span>Priority</span>
+            <input name="priority" type="number" min="0" max="4" value="${Number(detail.priority || 0)}">
+          </label>
+          <label>
+            <span>Assignee</span>
+            <input name="assignee" value="${escapeHTML(detail.assignee || "")}">
+          </label>
+          <label>
+            <span>Parent</span>
+            <input name="parent" value="${escapeHTML(detail.parent || "")}">
+          </label>
+          <label class="full">
+            <span>Description</span>
+            <textarea name="description" rows="5">${escapeHTML(detail.description || "")}</textarea>
+          </label>
+          <label class="full">
+            <span>Design</span>
+            <textarea name="design" rows="5">${escapeHTML(detail.design || "")}</textarea>
+          </label>
+          <label class="full">
+            <span>Acceptance Criteria</span>
+            <textarea name="acceptance_criteria" rows="5">${escapeHTML(detail.acceptance_criteria || "")}</textarea>
+          </label>
+          <div class="form-actions full">
+            <button class="primary-button" type="submit">Save changes</button>
+            <button type="button" id="refresh-detail">Refresh</button>
+          </div>
+        </form>
+      </section>
+    `;
+  }
+
+  function noteSection() {
+    return `
+      <section class="detail-section full">
+        <h3>Add Note</h3>
+        <form id="note-form" class="stack-form">
+          <textarea name="text" rows="4" placeholder="Add durable context"></textarea>
+          <div class="form-actions">
+            <button type="submit">Add note</button>
+          </div>
+        </form>
+      </section>
+    `;
+  }
+
+  function edgeSection(placeholder, id, buttonText) {
+    return `
+      <section class="detail-section">
+        <h3>${escapeHTML(buttonText)}</h3>
+        <form id="${id}" class="inline-form">
+          <input name="target_id" placeholder="${escapeHTML(placeholder)}">
+          <button type="submit">Add</button>
+        </form>
+      </section>
+    `;
+  }
+
+  function option(value, selected) {
+    return `<option value="${escapeHTML(value)}"${value === selected ? " selected" : ""}>${escapeHTML(value)}</option>`;
   }
 
   function badge(text, extraClass) {
@@ -270,6 +379,8 @@
           <div class="related-item">
             <div class="row-title">${escapeHTML(item.id)} ${item.missing ? "(missing)" : escapeHTML(item.title || "")}</div>
             <div class="row-meta">${escapeHTML([item.status, item.type, item.priority ? "p" + item.priority : ""].filter(Boolean).join(" / "))}</div>
+            ${title === "Dependencies" ? `<button type="button" class="small-button" data-remove-dep="${escapeHTML(item.id)}">Remove</button>` : ""}
+            ${title === "Links" ? `<button type="button" class="small-button" data-remove-link="${escapeHTML(item.id)}">Unlink</button>` : ""}
           </div>
         `).join("")}</div>`
       : "<p class=\"muted\">None.</p>";
@@ -326,6 +437,47 @@
     loadDetail(button.dataset.ticket);
   });
 
+  els.detail.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (!state.detail) return;
+    const form = event.target;
+    try {
+      if (form.id === "edit-form") {
+        await saveEdit(form);
+      } else if (form.id === "note-form") {
+        await addNote(form);
+      } else if (form.id === "dep-input") {
+        await addEdge(form, "deps");
+      } else if (form.id === "link-input") {
+        await addEdge(form, "links");
+      }
+    } catch (err) {
+      state.editMessage = err.code === "stale_revision"
+        ? "Stale edit: this ticket changed on disk. Refresh before saving."
+        : err.message;
+      renderDetail();
+    }
+  });
+
+  els.detail.addEventListener("click", async event => {
+    if (!state.detail) return;
+    const refresh = event.target.closest("#refresh-detail");
+    if (refresh) {
+      state.editMessage = "";
+      await loadDetail(state.detail.id);
+      return;
+    }
+    const depButton = event.target.closest("[data-remove-dep]");
+    if (depButton) {
+      await removeEdge("deps", depButton.dataset.removeDep);
+      return;
+    }
+    const linkButton = event.target.closest("[data-remove-link]");
+    if (linkButton) {
+      await removeEdge("links", linkButton.dataset.removeLink);
+    }
+  });
+
   els.refreshProjects.addEventListener("click", () => loadSession());
 
   els.filters.addEventListener("input", () => {
@@ -338,4 +490,74 @@
 
   initToken();
   loadSession();
+
+  async function saveEdit(form) {
+    const data = new FormData(form);
+    const priority = Number(data.get("priority"));
+    const fields = {
+      title: String(data.get("title") || ""),
+      status: String(data.get("status") || ""),
+      type: String(data.get("type") || ""),
+      priority: Number.isFinite(priority) ? priority : 2,
+      assignee: String(data.get("assignee") || ""),
+      parent: String(data.get("parent") || ""),
+      description: String(data.get("description") || ""),
+      design: String(data.get("design") || ""),
+      acceptance_criteria: String(data.get("acceptance_criteria") || "")
+    };
+    const detail = await mutate(
+      `/api/projects/${encodeURIComponent(state.selectedProject)}/tickets/${encodeURIComponent(state.detail.id)}`,
+      { source: "web", revision: state.detail.revision, fields },
+      { method: "PATCH" }
+    );
+    state.detail = detail;
+    state.editMessage = "Changes saved.";
+    await loadTickets();
+    renderDetail();
+  }
+
+  async function addNote(form) {
+    const data = new FormData(form);
+    const text = String(data.get("text") || "").trim();
+    if (!text) throw new Error("Note text is required.");
+    const detail = await mutate(
+      `/api/projects/${encodeURIComponent(state.selectedProject)}/tickets/${encodeURIComponent(state.detail.id)}/notes`,
+      { source: "web", revision: state.detail.revision, text }
+    );
+    state.detail = detail;
+    state.editMessage = "Note saved.";
+    await loadTickets();
+    renderDetail();
+  }
+
+  async function addEdge(form, kind) {
+    const data = new FormData(form);
+    const targetID = String(data.get("target_id") || "").trim();
+    if (!targetID) throw new Error("Ticket id is required.");
+    const detail = await mutate(
+      `/api/projects/${encodeURIComponent(state.selectedProject)}/tickets/${encodeURIComponent(state.detail.id)}/${kind}`,
+      { source: "web", revision: state.detail.revision, target_id: targetID }
+    );
+    state.detail = detail;
+    state.editMessage = kind === "deps" ? "Dependency added." : "Link added.";
+    await loadTickets();
+    renderDetail();
+  }
+
+  async function removeEdge(kind, targetID) {
+    const params = new URLSearchParams({
+      source: "web",
+      revision_hash: state.detail.revision.hash,
+      revision_mod_time: state.detail.revision.mod_time
+    });
+    const detail = await mutate(
+      `/api/projects/${encodeURIComponent(state.selectedProject)}/tickets/${encodeURIComponent(state.detail.id)}/${kind}/${encodeURIComponent(targetID)}?${params}`,
+      null,
+      { method: "DELETE" }
+    );
+    state.detail = detail;
+    state.editMessage = kind === "deps" ? "Dependency removed." : "Link removed.";
+    await loadTickets();
+    renderDetail();
+  }
 })();
