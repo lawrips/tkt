@@ -3,6 +3,8 @@
   --surface-panel: #ffffff;
   --surface-muted: #eef2f1;
   --surface-selected: #e7f1ed;
+  --surface-warning: #fff7e8;
+  --surface-danger: #fff0f0;
   --text-strong: #17211d;
   --text-body: #31413a;
   --text-muted: #69766f;
@@ -172,11 +174,17 @@ h3 {
   color: var(--warning);
 }
 
+.status-pill.fail {
+  color: var(--danger);
+  background: var(--surface-danger);
+}
+
 .icon-button {
   min-width: 72px;
 }
 
 .setup-panel,
+.health-panel,
 .diagnostics,
 .ticket-list,
 .project-list,
@@ -185,8 +193,14 @@ h3 {
 }
 
 .setup-panel:empty,
+.health-panel:empty,
 .diagnostics:empty {
   display: none;
+}
+
+.panel-header-compact {
+  min-height: 48px;
+  border-top: 1px solid var(--border-subtle);
 }
 
 .notice {
@@ -207,11 +221,80 @@ h3 {
 }
 
 .notice code,
-.detail-section code {
+.detail-section code,
+.health-check code {
   font-family: var(--font-mono);
   background: rgba(23, 33, 29, 0.07);
   border-radius: 4px;
   padding: 1px 4px;
+}
+
+.health-panel {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.health-summary {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.health-group {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.health-checks {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.health-check {
+  display: grid;
+  gap: var(--space-1);
+  border: 1px solid var(--border-subtle);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius);
+  padding: var(--space-2);
+  background: var(--surface-panel);
+}
+
+.health-check.warn {
+  border-left-color: var(--warning);
+  background: var(--surface-warning);
+}
+
+.health-check.fail {
+  border-left-color: var(--danger);
+  background: var(--surface-danger);
+}
+
+.health-check-heading {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: baseline;
+  color: var(--text-strong);
+  font-weight: 700;
+}
+
+.health-status {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+
+.health-check p {
+  margin: 0;
+  color: var(--text-body);
+  font-size: 12px;
+}
+
+.health-check code {
+  width: fit-content;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: var(--text-strong);
 }
 
 .project-list,

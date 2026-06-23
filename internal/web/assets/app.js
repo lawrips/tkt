@@ -7,6 +7,8 @@
     tickets: [],
     selectedTicket: "",
     detail: null,
+    health: null,
+    healthError: "",
     editMessage: "",
     filters: {
       search: "",
@@ -21,6 +23,8 @@
     setup: document.getElementById("setup-panel"),
     projects: document.getElementById("project-list"),
     refreshProjects: document.getElementById("refresh-projects"),
+    health: document.getElementById("health-panel"),
+    refreshHealth: document.getElementById("refresh-health"),
     ticketHeading: document.getElementById("ticket-heading"),
     ticketCount: document.getElementById("ticket-count"),
     filters: document.getElementById("filters"),
@@ -103,6 +107,7 @@
       setStatus("Connected", "ok");
       renderProjects();
       renderSetup();
+      await loadHealth();
       if (state.selectedProject) {
         await loadTickets();
       } else {
@@ -112,6 +117,85 @@
       setStatus("Cannot connect", "warn");
       els.setup.innerHTML = notice(err.message, "error");
     }
+  }
+
+  async function loadHealth() {
+    state.healthError = "";
+    els.health.innerHTML = "<p class=\"loading\">Checking setup...</p>";
+    try {
+      state.health = await api("/api/health");
+      renderHealth();
+    } catch (err) {
+      state.health = null;
+      state.healthError = err.message || "Health check unavailable.";
+      renderHealth();
+    }
+  }
+
+  function renderHealth() {
+    if (state.healthError) {
+      els.health.innerHTML = notice(escapeHTML(state.healthError), "error");
+      return;
+    }
+    const report = state.health;
+    if (!report) {
+      els.health.innerHTML = "";
+      return;
+    }
+    const summary = report.summary || {};
+    const checks = report.checks || [];
+    const status = report.status || "warn";
+    els.health.innerHTML = `
+      <div class="health-summary">
+        <span class="status-pill ${statusClass(status)}">${escapeHTML(status.toUpperCase())}</span>
+        <span class="row-meta">${Number(summary.pass || 0)} pass / ${Number(summary.warn || 0)} warn / ${Number(summary.fail || 0)} fail</span>
+      </div>
+      ${healthGroups(checks)}
+    `;
+  }
+
+  function healthGroups(checks) {
+    const categories = ["global", "project", "sync", "agent"];
+    return categories.map(category => {
+      const items = checks.filter(check => check.category === category);
+      if (!items.length) return "";
+      return `
+        <section class="health-group">
+          <h3>${escapeHTML(categoryTitle(category))}</h3>
+          <div class="health-checks">
+            ${items.map(healthCheck).join("")}
+          </div>
+        </section>
+      `;
+    }).join("");
+  }
+
+  function healthCheck(check) {
+    const status = check.status || "warn";
+    return `
+      <article class="health-check ${escapeHTML(status)}">
+        <div class="health-check-heading">
+          <span class="health-status">${escapeHTML(status.toUpperCase())}</span>
+          <span>${escapeHTML(check.message || "")}</span>
+        </div>
+        ${check.remediation ? `<p>${escapeHTML(check.remediation)}</p>` : ""}
+        ${check.command ? `<code>${escapeHTML(check.command)}</code>` : ""}
+      </article>
+    `;
+  }
+
+  function categoryTitle(category) {
+    if (category === "global") return "Global";
+    if (category === "project") return "Project";
+    if (category === "sync") return "Sync";
+    if (category === "agent") return "Agent";
+    return category || "Other";
+  }
+
+  function statusClass(status) {
+    if (status === "pass") return "ok";
+    if (status === "fail") return "fail";
+    return "warn";
   }
 
   function renderSetup() {
@@ -479,6 +563,7 @@
   });
 
   els.refreshProjects.addEventListener("click", () => loadSession());
+  els.refreshHealth.addEventListener("click", () => loadHealth());
 
   els.filters.addEventListener("input", () => {
     state.filters.search = els.search.value.trim();

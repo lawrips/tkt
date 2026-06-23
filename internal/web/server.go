@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/lawrips/tkt/internal/app"
+	"github.com/lawrips/tkt/internal/doctor"
 )
 
 type Options struct {
@@ -130,6 +131,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.URL.Path == "/api/session":
 		s.handleSession(w, r, svc)
+	case r.URL.Path == "/api/health":
+		s.handleHealth(w, r)
 	case r.URL.Path == "/api/projects":
 		s.handleProjects(w, r, svc)
 	case strings.HasPrefix(r.URL.Path, "/api/projects/"):
@@ -137,6 +140,18 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusNotFound, "not_found", "API route not found.", nil)
 	}
+}
+
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed.", nil)
+		return
+	}
+	report := doctor.Run(doctor.Options{
+		CWD:             s.cwd,
+		ProjectOverride: s.projectOverride,
+	})
+	writeJSON(w, http.StatusOK, report)
 }
 
 func (s *Server) handleSession(w http.ResponseWriter, r *http.Request, svc *app.Service) {

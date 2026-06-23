@@ -99,6 +99,71 @@ func TestEmbeddedAppIncludesEditingControls(t *testing.T) {
 	}
 }
 
+func TestEmbeddedAppIncludesHealthPanel(t *testing.T) {
+	index, err := assets.ReadFile("assets/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	appJS, err := assets.ReadFile("assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"health-panel", "refresh-health", "/api/health", "health-check"} {
+		if !strings.Contains(string(index)+"\n"+string(appJS), required) {
+			t.Fatalf("embedded app missing health marker %q", required)
+		}
+	}
+}
+
+func TestHealthEndpointReturnsDoctorReport(t *testing.T) {
+	_, repo, _ := setupWebProject(t)
+	server, err := New(Options{Token: "secret", CWD: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		Status string `json:"status"`
+		Checks []struct {
+			ID       string `json:"id"`
+			Category string `json:"category"`
+			Status   string `json:"status"`
+			Message  string `json:"message"`
+		} `json:"checks"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Status == "" || len(payload.Checks) == 0 {
+		t.Fatalf("expected doctor report, got %#v", payload)
+	}
+}
+
+func TestHealthEndpointRejectsMutation(t *testing.T) {
+	_, repo, _ := setupWebProject(t)
+	server, err := New(Options{Token: "secret", CWD: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/health", bytes.NewReader([]byte(`{}`)))
+	req.Header.Set("Authorization", "Bearer secret")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected method not allowed, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestTicketListReturnsParseDiagnostics(t *testing.T) {
 	_, repo, ticketDir := setupWebProject(t)
 	writeWebTicket(t, ticketDir, "c-good", "Good")
