@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/lawrips/tkt/internal/app"
@@ -119,25 +121,298 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "Missing or invalid web token.", nil)
 		return
 	}
-	if r.URL.Path != "/api/session" {
-		writeError(w, http.StatusNotFound, "not_found", "API route not found.", nil)
-		return
-	}
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed.", nil)
+	if isMutationMethod(r.Method) && !s.allowedOrigin(r) {
+		writeError(w, http.StatusForbidden, "forbidden_origin", "Unexpected request origin.", nil)
 		return
 	}
 
 	svc := app.New(app.Options{CWD: s.cwd, ProjectOverride: s.projectOverride})
+	switch {
+	case r.URL.Path == "/api/session":
+		s.handleSession(w, r, svc)
+	case r.URL.Path == "/api/projects":
+		s.handleProjects(w, r, svc)
+	case strings.HasPrefix(r.URL.Path, "/api/projects/"):
+		s.handleProjectRoute(w, r, svc)
+	default:
+		writeError(w, http.StatusNotFound, "not_found", "API route not found.", nil)
+	}
+}
+
+func (s *Server) handleSession(w http.ResponseWriter, r *http.Request, svc *app.Service) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed.", nil)
+		return
+	}
 	overview, err := svc.Projects()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error(), nil)
+		writeAppError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"version":  s.version,
 		"projects": overview,
 	})
+}
+
+func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request, svc *app.Service) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed.", nil)
+		return
+	}
+	overview, err := svc.Projects()
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, overview)
+}
+
+func (s *Server) handleProjectRoute(w http.ResponseWriter, r *http.Request, svc *app.Service) {
+	rest := strings.TrimPrefix(r.URL.Path, "/api/projects/")
+	parts := strings.Split(rest, "/")
+	if len(parts) < 2 {
+		writeError(w, http.StatusNotFound, "not_found", "API route not found.", nil)
+		return
+	}
+	projectName, ok := cleanPathPart(parts[0])
+	if !ok {
+		writeError(w, http.StatusBadRequest, "validation_error", "Invalid project name.", nil)
+		return
+	}
+	if parts[1] != "tickets" {
+		writeError(w, http.StatusNotFound, "not_found", "API route not found.", nil)
+		return
+	}
+
+	if len(parts) == 2 {
+		switch r.Method {
+		case http.MethodGet:
+			s.handleTicketList(w, r, svc, projectName)
+		case http.MethodPost:
+			s.handleTicketCreate(w, r, svc, projectName)
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed.", nil)
+		}
+		return
+	}
+
+	ticketID, ok := cleanPathPart(parts[2])
+	if !ok {
+		writeError(w, http.StatusBadRequest, "validation_error", "Invalid ticket id.", nil)
+		return
+	}
+	if len(parts) == 3 {
+		switch r.Method {
+		case http.MethodGet:
+			detail, err := svc.TicketDetail(projectName, ticketID)
+			if err != nil {
+				writeAppError(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, detail)
+		case http.MethodPatch:
+			s.handleTicketUpdate(w, r, svc, projectName, ticketID)
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed.", nil)
+		}
+		return
+	}
+
+	switch parts[3] {
+	case "notes":
+		if len(parts) != 4 || r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed.", nil)
+			return
+		}
+		s.handleAddNote(w, r, svc, projectName, ticketID)
+	case "deps":
+		s.handleDependencyRoute(w, r, svc, projectName, ticketID, parts)
+	case "links":
+		s.handleLinkRoute(w, r, svc, projectName, ticketID, parts)
+	default:
+		writeError(w, http.StatusNotFound, "not_found", "API route not found.", nil)
+	}
+}
+
+func (s *Server) handleTicketList(w http.ResponseWriter, r *http.Request, svc *app.Service, projectName string) {
+	options, err := listOptionsFromQuery(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "validation_error", err.Error(), nil)
+		return
+	}
+	list, err := svc.ListTickets(projectName, options)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+func (s *Server) handleTicketCreate(w http.ResponseWriter, r *http.Request, svc *app.Service, projectName string) {
+	var req createTicketRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "validation_error", err.Error(), nil)
+		return
+	}
+	detail, err := svc.CreateTicket(projectName, app.CreateTicketInput{
+		Source:             firstNonEmpty(req.Source, "web"),
+		ID:                 req.ID,
+		Title:              req.Title,
+		Description:        req.Description,
+		Design:             req.Design,
+		AcceptanceCriteria: req.AcceptanceCriteria,
+		Type:               req.Type,
+		Priority:           req.Priority,
+		Assignee:           req.Assignee,
+		Parent:             req.Parent,
+		Tags:               req.Tags,
+		ExternalRef:        req.ExternalRef,
+	})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, detail)
+}
+
+func (s *Server) handleTicketUpdate(w http.ResponseWriter, r *http.Request, svc *app.Service, projectName, ticketID string) {
+	var req updateTicketRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "validation_error", err.Error(), nil)
+		return
+	}
+	input := app.UpdateTicketInput{
+		Source:             firstNonEmpty(req.Source, "web"),
+		ExpectedRevision:   &req.Revision,
+		Title:              req.Fields.Title,
+		Status:             req.Fields.Status,
+		Type:               req.Fields.Type,
+		Priority:           req.Fields.Priority,
+		Assignee:           req.Fields.Assignee,
+		Parent:             req.Fields.Parent,
+		Tags:               req.Fields.Tags,
+		Description:        req.Fields.Description,
+		Design:             req.Fields.Design,
+		AcceptanceCriteria: req.Fields.AcceptanceCriteria,
+		ExternalRef:        req.Fields.ExternalRef,
+	}
+	detail, err := svc.UpdateTicket(projectName, ticketID, input)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, detail)
+}
+
+func (s *Server) handleAddNote(w http.ResponseWriter, r *http.Request, svc *app.Service, projectName, ticketID string) {
+	var req noteRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "validation_error", err.Error(), nil)
+		return
+	}
+	detail, err := svc.AddNote(projectName, ticketID, app.NoteInput{
+		Source:           firstNonEmpty(req.Source, "web"),
+		Text:             req.Text,
+		ExpectedRevision: &req.Revision,
+	})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, detail)
+}
+
+func (s *Server) handleDependencyRoute(w http.ResponseWriter, r *http.Request, svc *app.Service, projectName, ticketID string, parts []string) {
+	switch {
+	case len(parts) == 4 && r.Method == http.MethodPost:
+		var req edgeRequest
+		if err := decodeJSON(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "validation_error", err.Error(), nil)
+			return
+		}
+		detail, err := svc.AddDependency(projectName, ticketID, app.EdgeInput{
+			Source:           firstNonEmpty(req.Source, "web"),
+			TargetID:         req.TargetID,
+			ExpectedRevision: &req.Revision,
+		})
+		if err != nil {
+			writeAppError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, detail)
+	case len(parts) == 5 && r.Method == http.MethodDelete:
+		depID, ok := cleanPathPart(parts[4])
+		if !ok {
+			writeError(w, http.StatusBadRequest, "validation_error", "Invalid dependency id.", nil)
+			return
+		}
+		revision, err := revisionFromQuery(r.URL.Query())
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "validation_error", err.Error(), nil)
+			return
+		}
+		detail, err := svc.RemoveDependency(projectName, ticketID, app.EdgeInput{
+			Source:           firstNonEmpty(r.URL.Query().Get("source"), "web"),
+			TargetID:         depID,
+			ExpectedRevision: revision,
+		})
+		if err != nil {
+			writeAppError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, detail)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed.", nil)
+	}
+}
+
+func (s *Server) handleLinkRoute(w http.ResponseWriter, r *http.Request, svc *app.Service, projectName, ticketID string, parts []string) {
+	switch {
+	case len(parts) == 4 && r.Method == http.MethodPost:
+		var req edgeRequest
+		if err := decodeJSON(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "validation_error", err.Error(), nil)
+			return
+		}
+		targetIDs := req.TargetIDs
+		if len(targetIDs) == 0 && req.TargetID != "" {
+			targetIDs = []string{req.TargetID}
+		}
+		detail, err := svc.LinkTickets(projectName, ticketID, app.EdgeInput{
+			Source:           firstNonEmpty(req.Source, "web"),
+			TargetIDs:        targetIDs,
+			ExpectedRevision: &req.Revision,
+		})
+		if err != nil {
+			writeAppError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, detail)
+	case len(parts) == 5 && r.Method == http.MethodDelete:
+		targetID, ok := cleanPathPart(parts[4])
+		if !ok {
+			writeError(w, http.StatusBadRequest, "validation_error", "Invalid target id.", nil)
+			return
+		}
+		revision, err := revisionFromQuery(r.URL.Query())
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "validation_error", err.Error(), nil)
+			return
+		}
+		detail, err := svc.UnlinkTicket(projectName, ticketID, app.EdgeInput{
+			Source:           firstNonEmpty(r.URL.Query().Get("source"), "web"),
+			TargetID:         targetID,
+			ExpectedRevision: revision,
+		})
+		if err != nil {
+			writeAppError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, detail)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed.", nil)
+	}
 }
 
 func (s *Server) authorized(r *http.Request) bool {
@@ -157,6 +432,152 @@ func (s *Server) authorized(r *http.Request) bool {
 	return false
 }
 
+func (s *Server) allowedOrigin(r *http.Request) bool {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return true
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	host := parsed.Hostname()
+	return host == "127.0.0.1" || host == "localhost" || host == "::1"
+}
+
+func isMutationMethod(method string) bool {
+	switch method {
+	case http.MethodPost, http.MethodPatch, http.MethodPut, http.MethodDelete:
+		return true
+	default:
+		return false
+	}
+}
+
+type createTicketRequest struct {
+	Source             string   `json:"source"`
+	ID                 string   `json:"id"`
+	Title              string   `json:"title"`
+	Description        string   `json:"description"`
+	Design             string   `json:"design"`
+	AcceptanceCriteria string   `json:"acceptance_criteria"`
+	Type               string   `json:"type"`
+	Priority           int      `json:"priority"`
+	Assignee           string   `json:"assignee"`
+	Parent             string   `json:"parent"`
+	Tags               []string `json:"tags"`
+	ExternalRef        string   `json:"external_ref"`
+}
+
+type updateTicketRequest struct {
+	Revision app.Revision `json:"revision"`
+	Source   string       `json:"source"`
+	Fields   updateFields `json:"fields"`
+}
+
+type updateFields struct {
+	Title              *string   `json:"title"`
+	Status             *string   `json:"status"`
+	Type               *string   `json:"type"`
+	Priority           *int      `json:"priority"`
+	Assignee           *string   `json:"assignee"`
+	Parent             *string   `json:"parent"`
+	Tags               *[]string `json:"tags"`
+	Description        *string   `json:"description"`
+	Design             *string   `json:"design"`
+	AcceptanceCriteria *string   `json:"acceptance_criteria"`
+	ExternalRef        *string   `json:"external_ref"`
+}
+
+type noteRequest struct {
+	Revision app.Revision `json:"revision"`
+	Source   string       `json:"source"`
+	Text     string       `json:"text"`
+}
+
+type edgeRequest struct {
+	Revision  app.Revision `json:"revision"`
+	Source    string       `json:"source"`
+	TargetID  string       `json:"target_id"`
+	TargetIDs []string     `json:"target_ids"`
+}
+
+func listOptionsFromQuery(values url.Values) (app.ListOptions, error) {
+	options := app.ListOptions{
+		Status:   values.Get("status"),
+		Type:     values.Get("type"),
+		Assignee: values.Get("assignee"),
+		Tag:      values.Get("tag"),
+		Parent:   values.Get("parent"),
+		Search:   values.Get("search"),
+		Sort:     values.Get("sort"),
+		OnlyOpen: values.Get("only_open") == "true",
+		Ready:    values.Get("ready") == "true",
+		Blocked:  values.Get("blocked") == "true",
+	}
+	if raw := values.Get("priority"); raw != "" {
+		priority, err := strconv.Atoi(raw)
+		if err != nil {
+			return app.ListOptions{}, fmt.Errorf("invalid priority %q", raw)
+		}
+		options.Priority = &priority
+	}
+	if raw := values.Get("limit"); raw != "" {
+		limit, err := strconv.Atoi(raw)
+		if err != nil {
+			return app.ListOptions{}, fmt.Errorf("invalid limit %q", raw)
+		}
+		options.Limit = limit
+	}
+	return options, nil
+}
+
+func revisionFromQuery(values url.Values) (*app.Revision, error) {
+	hash := values.Get("revision_hash")
+	modTime := values.Get("revision_mod_time")
+	if hash == "" && modTime == "" {
+		return nil, nil
+	}
+	if hash == "" || modTime == "" {
+		return nil, errors.New("revision_hash and revision_mod_time are both required")
+	}
+	return &app.Revision{Hash: hash, ModTime: modTime}, nil
+}
+
+func decodeJSON(r *http.Request, target any) error {
+	defer r.Body.Close()
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(target); err != nil {
+		return err
+	}
+	return nil
+}
+
+func cleanPathPart(raw string) (string, bool) {
+	value, err := url.PathUnescape(raw)
+	if err != nil {
+		return "", false
+	}
+	value = strings.TrimSpace(value)
+	if value == "" || value == "." || value == ".." {
+		return "", false
+	}
+	if strings.Contains(value, "/") || strings.Contains(value, "\\") {
+		return "", false
+	}
+	return value, true
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
@@ -169,6 +590,19 @@ func writeError(w http.ResponseWriter, status int, code, message string, details
 		Message: message,
 		Details: details,
 	}})
+}
+
+func writeAppError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, app.ErrProjectNotFound):
+		writeError(w, http.StatusNotFound, "project_not_found", "Project not found.", nil)
+	case errors.Is(err, app.ErrTicketNotFound):
+		writeError(w, http.StatusNotFound, "not_found", "Ticket not found.", nil)
+	case errors.Is(err, app.ErrStaleRevision):
+		writeError(w, http.StatusConflict, "stale_revision", "Ticket changed on disk. Refresh before saving.", nil)
+	default:
+		writeError(w, http.StatusInternalServerError, "internal_error", err.Error(), nil)
+	}
 }
 
 func Listen(addr string) (net.Listener, error) {
