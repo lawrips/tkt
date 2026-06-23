@@ -72,6 +72,7 @@ func rootHelpSections() []helpSection {
 			title: "Workflow & Tools",
 			entries: []helpEntry{
 				{"workflow", "Ticket lifecycle, commit format, and conventions  ★"},
+				{"doctor", "Audit local setup and agent health"},
 				{"tui", "Interactive terminal UI"},
 				{"serve start|stop|status|logs", "Manage background watcher daemon"},
 				{"web [start|status]", "Run local browser control plane"},
@@ -254,6 +255,18 @@ JSON fields: id, status, type, priority, title, description,
   design, acceptance_criteria, deps[], links[], tags[],
   created, assignee, parent, notes, external_ref
 Body sections (## Heading) become snake_case fields.`
+
+const doctorDetail = `Runs safe local checks for TKT setup health.
+
+Checks include config loading, project resolution, ticket store health,
+workflow guidance, central-store git status, background serve/watch status,
+and known agent instruction files. The command does not run fetch, pull,
+push, start or stop services, edit files, or print instruction file contents.
+
+Examples:
+  tkt doctor
+  tkt doctor --json
+  tkt --project my-project doctor`
 
 const addNoteDetail = `Appends a timestamped note to the ticket's Notes section.
 If no text argument is given, reads from stdin.

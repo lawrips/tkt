@@ -110,6 +110,7 @@ func rootCommand() command {
 		"stats":    commandWithRunner("stats", "stats", "Project health summary", runStats),
 		"timeline": commandWithRunner("timeline", "timeline [--weeks=N]", "Closed tickets by week", runTimeline),
 		"workflow": commandWithRunner("workflow", "workflow", "Ticket workflow guide", runWorkflow),
+		"doctor":   commandWithRunner("doctor", "doctor", "Audit TKT setup health", runDoctor),
 		"epic-view": commandWithRunner(
 			"epic-view",
 			"epic-view <id>",
@@ -188,6 +189,7 @@ func rootCommand() command {
 	setDetail(commands, "init", initDetail)
 	setDetail(commands, "migrate", migrateDetailFunc())
 	setDetail(commands, "recompute", recomputeDetail)
+	setDetail(commands, "doctor", doctorDetail)
 	setDetail(commands, "web", webDetail)
 
 	return command{
@@ -299,7 +301,7 @@ func isHelpArg(token string) bool {
 // requiresInit returns true for commands that need a resolved project.
 func requiresInit(cmdName string) bool {
 	switch cmdName {
-	case "init", "config", "tui", "mcp", "serve", "web", "workflow", "version", "agent-instructions", "agent-setup":
+	case "init", "config", "tui", "mcp", "serve", "web", "workflow", "doctor", "version", "agent-instructions", "agent-setup":
 		return false
 	}
 	return true

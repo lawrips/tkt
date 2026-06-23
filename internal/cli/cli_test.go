@@ -34,6 +34,7 @@ func TestHelpListsV1Commands(t *testing.T) {
 		"stats",
 		"timeline",
 		"workflow",
+		"doctor",
 		"lifecycle",
 		"progress",
 		"dashboard",
@@ -94,7 +95,7 @@ func TestDepTreeErrorsWhenTicketMissing(t *testing.T) {
 
 func TestRequiresInit(t *testing.T) {
 	// Commands that should NOT require init
-	noInit := []string{"init", "config", "tui", "mcp", "serve", "web", "workflow", "version"}
+	noInit := []string{"init", "config", "tui", "mcp", "serve", "web", "workflow", "doctor", "version"}
 	for _, cmd := range noInit {
 		if requiresInit(cmd) {
 			t.Errorf("requiresInit(%q) = true, want false", cmd)
@@ -107,6 +108,28 @@ func TestRequiresInit(t *testing.T) {
 		if !requiresInit(cmd) {
 			t.Errorf("requiresInit(%q) = false, want true", cmd)
 		}
+	}
+}
+
+func TestDoctorSkipsInitCheck(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := t.TempDir()
+
+	cwdMu.Lock()
+	defer cwdMu.Unlock()
+	original, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(original)
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	err := Run([]string{"doctor"}, &out, &errOut)
+	if err != nil {
+		t.Fatalf("doctor should not hit init guard: %v", err)
+	}
+	if !strings.Contains(out.String(), "TKT Doctor") {
+		t.Fatalf("unexpected doctor output: %s", out.String())
 	}
 }
 
