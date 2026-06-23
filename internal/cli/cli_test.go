@@ -40,6 +40,7 @@ func TestHelpListsV1Commands(t *testing.T) {
 		"epic-view",
 		"tui",
 		"serve",
+		"web",
 		"mcp",
 		"config",
 		"init",
@@ -93,7 +94,7 @@ func TestDepTreeErrorsWhenTicketMissing(t *testing.T) {
 
 func TestRequiresInit(t *testing.T) {
 	// Commands that should NOT require init
-	noInit := []string{"init", "config", "tui", "mcp", "serve", "workflow", "version"}
+	noInit := []string{"init", "config", "tui", "mcp", "serve", "web", "workflow", "version"}
 	for _, cmd := range noInit {
 		if requiresInit(cmd) {
 			t.Errorf("requiresInit(%q) = true, want false", cmd)
@@ -124,6 +125,34 @@ func TestServeSubcommandsSkipInitCheck(t *testing.T) {
 		if err != nil && strings.Contains(err.Error(), "not initialized") {
 			t.Errorf("serve %s hit init guard: %v", sub, err)
 		}
+	}
+}
+
+func TestWebSubcommandsSkipInitCheck(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	for _, sub := range []string{"stop", "status", "logs"} {
+		var out bytes.Buffer
+		var errOut bytes.Buffer
+		err := Run([]string{"web", sub}, &out, &errOut)
+		if err != nil && strings.Contains(err.Error(), "not initialized") {
+			t.Errorf("web %s hit init guard: %v", sub, err)
+		}
+	}
+}
+
+func TestWebStatePathsSeparateFromServe(t *testing.T) {
+	webPID, err := webPIDPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	servePID, err := servePIDPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if webPID == servePID {
+		t.Fatalf("web pid path should differ from serve pid path")
 	}
 }
 

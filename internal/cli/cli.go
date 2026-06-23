@@ -148,6 +148,7 @@ func rootCommand() command {
 			runRecompute,
 		),
 		"serve": serveRootCommand(),
+		"web":   webRootCommand(),
 		"config": commandWithRunner(
 			"config",
 			"config [--project <name>] [--all] | config set [<project>] <field> <value> | config resolve",
@@ -160,7 +161,7 @@ func rootCommand() command {
 			"Start MCP stdio JSON-RPC server",
 			runMCP,
 		),
-		"version":      commandWithRunner("version", "version", "Print version and exit", runVersion),
+		"version":            commandWithRunner("version", "version", "Print version and exit", runVersion),
 		"agent-instructions": commandWithRunner("agent-instructions", "agent-instructions", "Print agent instructions", runInstructions),
 		"agent-setup":        commandWithRunner("agent-setup", "agent-setup", "Print setup instructions", runSetup),
 		"context": commandWithRunner(
@@ -187,6 +188,7 @@ func rootCommand() command {
 	setDetail(commands, "init", initDetail)
 	setDetail(commands, "migrate", migrateDetailFunc())
 	setDetail(commands, "recompute", recomputeDetail)
+	setDetail(commands, "web", webDetail)
 
 	return command{
 		name:        "tkt",
@@ -207,6 +209,22 @@ func serveRootCommand() command {
 			"status": commandWithRunner("status", "serve status", "Show serve daemon status", runServeStatus),
 			"logs":   commandWithRunner("logs", "serve logs [-n=50]", "Show recent serve log output", runServeLogs),
 			"run":    commandWithRunner("run", "serve run [--once] [--interval=5s]", "Run watcher in foreground (internal)", runServeRun),
+		},
+	}
+}
+
+func webRootCommand() command {
+	return command{
+		name:        "web",
+		usage:       "web [run|start|stop|status|logs]",
+		description: "Run local browser control plane",
+		run:         runWeb,
+		subcommands: map[string]command{
+			"run":    commandWithRunner("run", "web run [--addr=127.0.0.1:0]", "Run web server in foreground", runWebRun),
+			"start":  commandWithRunner("start", "web start [--addr=127.0.0.1:0]", "Start web server in background", runWebStart),
+			"stop":   commandWithRunner("stop", "web stop", "Stop background web server", runWebStop),
+			"status": commandWithRunner("status", "web status", "Show web server status", runWebStatus),
+			"logs":   commandWithRunner("logs", "web logs [-n=50]", "Show recent web log output", runWebLogs),
 		},
 	}
 }
@@ -281,7 +299,7 @@ func isHelpArg(token string) bool {
 // requiresInit returns true for commands that need a resolved project.
 func requiresInit(cmdName string) bool {
 	switch cmdName {
-	case "init", "config", "tui", "mcp", "serve", "workflow", "version", "agent-instructions", "agent-setup":
+	case "init", "config", "tui", "mcp", "serve", "web", "workflow", "version", "agent-instructions", "agent-setup":
 		return false
 	}
 	return true

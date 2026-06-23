@@ -74,6 +74,7 @@ func rootHelpSections() []helpSection {
 				{"workflow", "Ticket lifecycle, commit format, and conventions  ★"},
 				{"tui", "Interactive terminal UI"},
 				{"serve start|stop|status|logs", "Manage background watcher daemon"},
+				{"web [start|status]", "Run local browser control plane"},
 				{"mcp", "Start MCP stdio JSON-RPC server"},
 			},
 		},
@@ -312,6 +313,17 @@ const recomputeDetail = `Options:
 
 Rebuilds the commit journal from git log. Useful after initial
 setup or if the journal gets out of sync with git history.`
+
+const webDetail = `Subcommands:
+  tkt web                     Run local web server in foreground
+  tkt web run                 Run local web server in foreground
+  tkt web start               Start local web server in background
+  tkt web stop                Stop background web server
+  tkt web status              Show background web server status
+  tkt web logs                Show recent web log output
+
+The web server binds to localhost by default and uses a per-launch token.
+It manages only the web process, not the watch/sync service.`
 
 func setDetail(commands map[string]command, name, detail string) {
 	cmd := commands[name]
