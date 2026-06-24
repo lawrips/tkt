@@ -112,12 +112,16 @@ The web process is separate from `tkt serve`. It does not run sync, push, pull, 
 Commands:
 
 ```bash
-tkt web              # foreground server, prints an authenticated localhost URL
+tkt web              # foreground server on 127.0.0.1:7420, prints an authenticated URL
 tkt web start        # background web process
 tkt web status       # web process status only
 tkt web stop         # stops only the web process
 tkt web logs         # web process logs only
 ```
+
+Use `--addr=127.0.0.1:0` when you want an ephemeral port instead of the stable
+default. For remote access, keep the server bound to localhost and use SSH port
+forwarding, for example `ssh -L 7420:127.0.0.1:7420 <host>`.
 
 ### Composite Views
 

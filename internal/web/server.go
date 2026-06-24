@@ -24,6 +24,8 @@ type Options struct {
 	Version         string
 }
 
+const DefaultAddr = "127.0.0.1:7420"
+
 type Server struct {
 	token           string
 	cwd             string
@@ -624,10 +626,7 @@ func writeAppError(w http.ResponseWriter, err error) {
 }
 
 func Listen(addr string) (net.Listener, error) {
-	if strings.TrimSpace(addr) == "" {
-		addr = "127.0.0.1:0"
-	}
-	listener, err := net.Listen("tcp", addr)
+	listener, err := net.Listen("tcp", NormalizeAddr(addr))
 	if err != nil {
 		return nil, err
 	}
@@ -636,4 +635,12 @@ func Listen(addr string) (net.Listener, error) {
 		return nil, errors.New("tkt web only binds to loopback addresses by default")
 	}
 	return listener, nil
+}
+
+func NormalizeAddr(addr string) string {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return DefaultAddr
+	}
+	return addr
 }

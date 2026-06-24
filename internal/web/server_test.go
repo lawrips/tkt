@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +39,15 @@ func TestURLForIPv6Loopback(t *testing.T) {
 
 	if got != "http://[::1]:4321/?token=secret" {
 		t.Fatalf("unexpected IPv6 URL: %s", got)
+	}
+}
+
+func TestNormalizeAddrUsesStableDefault(t *testing.T) {
+	if got := NormalizeAddr(""); got != DefaultAddr {
+		t.Fatalf("NormalizeAddr empty = %q, want %q", got, DefaultAddr)
+	}
+	if got := NormalizeAddr(" 127.0.0.1:0 "); got != "127.0.0.1:0" {
+		t.Fatalf("NormalizeAddr explicit = %q", got)
 	}
 }
 
@@ -113,7 +123,7 @@ func TestServesEmbeddedAppAssets(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, path := range []string{"/", "/assets/styles.css", "/assets/app.js"} {
+	for _, path := range []string{"/", "/assets/styles.css", "/assets/app.js", "/assets/markdown.js"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		rec := httptest.NewRecorder()
 		server.ServeHTTP(rec, req)
@@ -124,13 +134,53 @@ func TestServesEmbeddedAppAssets(t *testing.T) {
 }
 
 func TestEmbeddedAppDoesNotLoadExternalAssets(t *testing.T) {
-	index, err := assets.ReadFile("assets/index.html")
+	for _, path := range []string{"assets/index.html", "assets/styles.css", "assets/app.js", "assets/markdown.js"} {
+		raw, err := assets.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, disallowed := range []string{"https://", "http://", "//cdn", "fonts.googleapis", "@import"} {
+			if strings.Contains(string(raw), disallowed) {
+				t.Fatalf("%s contains external asset reference %q", path, disallowed)
+			}
+		}
+	}
+}
+
+func TestEmbeddedStylesUseSemanticColorTokens(t *testing.T) {
+	raw, err := assets.ReadFile("assets/styles.css")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, disallowed := range []string{"https://", "http://", "//cdn", "fonts.googleapis"} {
-		if strings.Contains(string(index), disallowed) {
-			t.Fatalf("index contains external asset reference %q", disallowed)
+	css := string(raw)
+	for _, required := range []string{
+		"--semantic-shell-",
+		"--semantic-pane-",
+		"--semantic-list-",
+		"--semantic-content-",
+		"--semantic-detail-",
+		"--semantic-control-",
+		"--semantic-chip-",
+	} {
+		if !strings.Contains(css, required) {
+			t.Fatalf("styles.css missing semantic token family %q", required)
+		}
+	}
+
+	rootEnd := strings.Index(css, "\n}\n\n* {")
+	if rootEnd == -1 {
+		t.Fatal("styles.css root token block not found")
+	}
+	componentCSS := css[rootEnd:]
+	if strings.Contains(componentCSS, "var(--raw-") {
+		t.Fatal("component CSS references raw palette tokens")
+	}
+	if regexp.MustCompile(`#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b`).MatchString(componentCSS) {
+		t.Fatal("component CSS contains a raw hex color")
+	}
+	for _, rawColor := range []string{"rgba(", "rgb(", "hsla(", "hsl("} {
+		if strings.Contains(componentCSS, rawColor) {
+			t.Fatalf("component CSS contains raw color %q", rawColor)
 		}
 	}
 }
@@ -140,9 +190,26 @@ func TestEmbeddedAppIncludesEditingControls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"edit-form", "note-form", "dep-input", "link-input", "stale_revision"} {
+	for _, required := range []string{"edit-form", "toggle-edit", "cancel-edit", "note-form", "dep-input", "link-input", "stale_revision", "data-nav-ticket"} {
 		if !strings.Contains(string(appJS), required) {
 			t.Fatalf("app.js missing editing marker %q", required)
+		}
+	}
+}
+
+func TestEmbeddedAppIncludesWorkbenchLayoutShell(t *testing.T) {
+	index, err := assets.ReadFile("assets/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	appJS, err := assets.ReadFile("assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	combined := string(index) + "\n" + string(appJS)
+	for _, required := range []string{"panel-scroll", "detail-back", "view-detail", "view-list", "setMobileView"} {
+		if !strings.Contains(combined, required) {
+			t.Fatalf("embedded app missing workbench layout marker %q", required)
 		}
 	}
 }
@@ -156,9 +223,56 @@ func TestEmbeddedAppIncludesHealthPanel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"health-panel", "refresh-health", "/api/health", "health-check"} {
-		if !strings.Contains(string(index)+"\n"+string(appJS), required) {
+	combined := string(index) + "\n" + string(appJS)
+	for _, required := range []string{"health-column", "nav-health", "refresh-health", "/api/health", "health-check", "setActiveView", "applyPaneSizes"} {
+		if !strings.Contains(combined, required) {
 			t.Fatalf("embedded app missing health marker %q", required)
+		}
+	}
+}
+
+func TestEmbeddedAppIncludesDiscoveryControls(t *testing.T) {
+	index, err := assets.ReadFile("assets/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	appJS, err := assets.ReadFile("assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	combined := string(index) + "\n" + string(appJS)
+	for _, required := range []string{"ticket-inbox", "sort-pill", "data-sort-field", "open-sidebar", "toggle-sidebar", "sidebar-collapsed", "sidebar-drawer-open", "resize-handle", "type-epic", "type-mark-epic", "filter-chip", "tkt-web-selected-project", "tkt-web-sidebar-collapsed", "tkt-web-pane-widths"} {
+		if !strings.Contains(combined, required) {
+			t.Fatalf("embedded app missing discovery marker %q", required)
+		}
+	}
+}
+
+func TestEmbeddedAppIncludesMarkdownRendering(t *testing.T) {
+	index, err := assets.ReadFile("assets/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	appJS, err := assets.ReadFile("assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	markdownJS, err := assets.ReadFile("assets/markdown.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	combined := string(index) + "\n" + string(appJS) + "\n" + string(markdownJS)
+	for _, required := range []string{
+		"/assets/markdown.js",
+		"tktMarkdown",
+		"renderMarkdown",
+		"markdown-body",
+		"sanitizeHTML",
+		"sectionHeading",
+		"notesContent",
+	} {
+		if !strings.Contains(combined, required) {
+			t.Fatalf("embedded app missing markdown marker %q", required)
 		}
 	}
 }

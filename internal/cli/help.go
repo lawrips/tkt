@@ -336,6 +336,8 @@ const webDetail = `Subcommands:
   tkt web logs                Show recent web log output
 
 The web server binds to localhost by default and uses a per-launch token.
+The default address is 127.0.0.1:7420; use --addr=127.0.0.1:0 for an
+ephemeral port.
 It can run before tkt init to show setup guidance and doctor-style health.
 It manages only the web process, not the watch/sync service, and does not run
 sync, push, pull, fetch, arbitrary shell commands, or arbitrary filesystem

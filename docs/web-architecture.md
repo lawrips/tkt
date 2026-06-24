@@ -88,11 +88,12 @@ Commands:
 - `tkt web`
   - Foreground server.
   - Equivalent to `tkt web run`.
-  - Prints authenticated localhost URL.
+  - Binds to `127.0.0.1:7420` by default and prints authenticated localhost URL.
 
 - `tkt web run`
   - Explicit foreground subcommand.
   - Used by `tkt web start`.
+  - Accepts `--addr=127.0.0.1:0` for an ephemeral port or another loopback bind address.
 
 - `tkt web start`
   - Starts a background web process.

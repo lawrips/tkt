@@ -37,7 +37,12 @@ Not allowed:
 
 Default bind address:
 
-- `127.0.0.1`.
+- `127.0.0.1:7420`.
+
+Users who want remote browser access should keep the server bound to loopback and
+use SSH port forwarding or an equivalent encrypted tunnel, such as
+`ssh -L 7420:127.0.0.1:7420 <host>`. Binding to a non-loopback interface is not
+part of v1.
 
 Optional future bind modes require a separate design. V1 should not expose the
 server on a LAN interface by accident.

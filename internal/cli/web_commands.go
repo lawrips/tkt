@@ -29,7 +29,7 @@ func runWeb(ctx context, args []string) error {
 func runWebRun(ctx context, args []string) error {
 	fs := flag.NewFlagSet("web run", flag.ContinueOnError)
 	fs.SetOutput(ctx.stderr)
-	addr := "127.0.0.1:0"
+	addr := web.DefaultAddr
 	statePath := ""
 	fs.StringVar(&addr, "addr", addr, "")
 	fs.StringVar(&statePath, "state", "", "")
@@ -37,7 +37,7 @@ func runWebRun(ctx context, args []string) error {
 		return err
 	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf("usage: tkt web run [--addr=127.0.0.1:0]")
+		return fmt.Errorf("usage: tkt web run [--addr=%s]", web.DefaultAddr)
 	}
 
 	server, err := web.New(web.Options{
@@ -67,7 +67,8 @@ func runWebRun(ctx context, args []string) error {
 			return err
 		}
 	} else {
-		_, _ = fmt.Fprintf(ctx.stdout, "tkt web running at %s\n", url)
+		_, _ = fmt.Fprintln(ctx.stdout, "tkt web running at:")
+		_, _ = fmt.Fprintln(ctx.stdout, url)
 	}
 
 	return http.Serve(listener, server)
@@ -76,13 +77,13 @@ func runWebRun(ctx context, args []string) error {
 func runWebStart(ctx context, args []string) error {
 	fs := flag.NewFlagSet("web start", flag.ContinueOnError)
 	fs.SetOutput(ctx.stderr)
-	addr := "127.0.0.1:0"
+	addr := web.DefaultAddr
 	fs.StringVar(&addr, "addr", addr, "")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf("usage: tkt web start [--addr=127.0.0.1:0]")
+		return fmt.Errorf("usage: tkt web start [--addr=%s]", web.DefaultAddr)
 	}
 
 	pidPath, err := webPIDPath()
@@ -109,7 +110,8 @@ func runWebStart(ctx context, args []string) error {
 		}
 		_, _ = fmt.Fprintf(ctx.stdout, "web already running (pid %d)\n", pid)
 		if state.URL != "" {
-			_, _ = fmt.Fprintf(ctx.stdout, "url: %s\n", state.URL)
+			_, _ = fmt.Fprintln(ctx.stdout, "url:")
+			_, _ = fmt.Fprintln(ctx.stdout, state.URL)
 		}
 		return nil
 	}
@@ -161,7 +163,8 @@ func runWebStart(ctx context, args []string) error {
 
 	_, _ = fmt.Fprintf(ctx.stdout, "web started (pid %d, log: %s)\n", pid, logPath)
 	if state.URL != "" {
-		_, _ = fmt.Fprintf(ctx.stdout, "url: %s\n", state.URL)
+		_, _ = fmt.Fprintln(ctx.stdout, "url:")
+		_, _ = fmt.Fprintln(ctx.stdout, state.URL)
 	} else {
 		_, _ = fmt.Fprintln(ctx.stdout, "url: pending; run `tkt web status`")
 	}
@@ -246,7 +249,8 @@ func runWebStatus(ctx context, args []string) error {
 	if running {
 		_, _ = fmt.Fprintf(ctx.stdout, "web running (pid %d)\n", pid)
 		if state.URL != "" {
-			_, _ = fmt.Fprintf(ctx.stdout, "url: %s\n", state.URL)
+			_, _ = fmt.Fprintln(ctx.stdout, "url:")
+			_, _ = fmt.Fprintln(ctx.stdout, state.URL)
 		}
 	} else {
 		_, _ = fmt.Fprintln(ctx.stdout, "web is not running")

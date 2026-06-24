@@ -222,8 +222,8 @@ func webRootCommand() command {
 		description: "Run local browser control plane",
 		run:         runWeb,
 		subcommands: map[string]command{
-			"run":    commandWithRunner("run", "web run [--addr=127.0.0.1:0]", "Run web server in foreground", runWebRun),
-			"start":  commandWithRunner("start", "web start [--addr=127.0.0.1:0]", "Start web server in background", runWebStart),
+			"run":    commandWithRunner("run", "web run [--addr=127.0.0.1:7420]", "Run web server in foreground", runWebRun),
+			"start":  commandWithRunner("start", "web start [--addr=127.0.0.1:7420]", "Start web server in background", runWebStart),
 			"stop":   commandWithRunner("stop", "web stop", "Stop background web server", runWebStop),
 			"status": commandWithRunner("status", "web status", "Show web server status", runWebStatus),
 			"logs":   commandWithRunner("logs", "web logs [-n=50]", "Show recent web log output", runWebLogs),
