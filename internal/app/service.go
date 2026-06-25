@@ -20,6 +20,12 @@ var (
 	ErrProjectNotFound = errors.New("project not found")
 	ErrTicketNotFound  = errors.New("ticket not found")
 	ErrStaleRevision   = errors.New("stale ticket revision")
+	ErrValidation      = errors.New("validation error")
+)
+
+var (
+	allowedStatusValues = []string{"open", "in_progress", "needs_testing", "closed"}
+	allowedTypeValues   = []string{"bug", "feature", "task", "epic", "chore"}
 )
 
 type Service struct {
@@ -140,7 +146,7 @@ type CreateTicketInput struct {
 	Design             string
 	AcceptanceCriteria string
 	Type               string
-	Priority           int
+	Priority           *int
 	Assignee           string
 	Parent             string
 	Tags               []string
@@ -291,6 +297,10 @@ func (s *Service) CreateTicket(projectName string, input CreateTicketInput) (Tic
 		return TicketDetail{}, err
 	}
 
+	source, err := normalizeSource(input.Source)
+	if err != nil {
+		return TicketDetail{}, err
+	}
 	id := strings.TrimSpace(input.ID)
 	if id == "" {
 		generated, err := ticket.GenerateID(info.TicketDir)
@@ -298,21 +308,41 @@ func (s *Service) CreateTicket(projectName string, input CreateTicketInput) (Tic
 			return TicketDetail{}, err
 		}
 		id = generated
-	} else if strings.ContainsAny(id, " \t\r\n/\\") {
-		return TicketDetail{}, fmt.Errorf("invalid ticket id %q", id)
+	} else if id, err = validateTicketIDField("ticket id", id, false); err != nil {
+		return TicketDetail{}, err
 	} else if _, err := os.Stat(filepath.Join(info.TicketDir, id+".md")); err == nil {
-		return TicketDetail{}, fmt.Errorf("ticket id %q already exists", id)
+		return TicketDetail{}, validationErrorf("ticket id %q already exists", id)
 	} else if !os.IsNotExist(err) {
 		return TicketDetail{}, err
 	}
 
-	ticketType := input.Type
+	ticketType := strings.TrimSpace(input.Type)
 	if ticketType == "" {
 		ticketType = "task"
 	}
-	priority := input.Priority
-	if priority < 0 {
-		priority = 2
+	ticketType, err = validateEnumField("type", ticketType, allowedTypeValues)
+	if err != nil {
+		return TicketDetail{}, err
+	}
+	priority, err := normalizePriority(input.Priority)
+	if err != nil {
+		return TicketDetail{}, err
+	}
+	assignee, err := validateScalarField("assignee", input.Assignee, true)
+	if err != nil {
+		return TicketDetail{}, err
+	}
+	parent, err := validateTicketIDField("parent", input.Parent, true)
+	if err != nil {
+		return TicketDetail{}, err
+	}
+	tags, err := validateTagList(input.Tags)
+	if err != nil {
+		return TicketDetail{}, err
+	}
+	externalRef, err := validateScalarField("external_ref", input.ExternalRef, true)
+	if err != nil {
+		return TicketDetail{}, err
 	}
 
 	record := ticket.Record{
@@ -326,10 +356,10 @@ func (s *Service) CreateTicket(projectName string, input CreateTicketInput) (Tic
 			Created:     s.now().UTC().Format(time.RFC3339),
 			Type:        ticketType,
 			Priority:    priority,
-			Assignee:    input.Assignee,
-			Parent:      input.Parent,
-			Tags:        input.Tags,
-			ExternalRef: input.ExternalRef,
+			Assignee:    assignee,
+			Parent:      parent,
+			Tags:        tags,
+			ExternalRef: externalRef,
 			Extra:       map[string]ticket.ExtraField{},
 		},
 		Body: ticket.Body{
@@ -340,7 +370,7 @@ func (s *Service) CreateTicket(projectName string, input CreateTicketInput) (Tic
 		},
 	}
 	if strings.TrimSpace(record.Body.Title) == "" {
-		return TicketDetail{}, errors.New("title is required")
+		return TicketDetail{}, validationErrorf("title is required")
 	}
 	if err := ticket.SaveRecord(record); err != nil {
 		return TicketDetail{}, err
@@ -348,20 +378,76 @@ func (s *Service) CreateTicket(projectName string, input CreateTicketInput) (Tic
 	s.appendMutation(projectName, engine.MutationEntry{
 		TicketID:      id,
 		Operation:     "create",
-		Source:        input.Source,
+		Source:        source,
 		FieldsChanged: []string{"title", "status", "type", "priority"},
 	})
 	return s.TicketDetail(projectName, id)
 }
 
 func (s *Service) UpdateTicket(projectName, id string, input UpdateTicketInput) (TicketDetail, error) {
+	source, err := normalizeSource(input.Source)
+	if err != nil {
+		return TicketDetail{}, err
+	}
+	id, err = validateTicketIDField("ticket id", id, false)
+	if err != nil {
+		return TicketDetail{}, err
+	}
+	if input.Status != nil {
+		value, err := validateEnumField("status", *input.Status, allowedStatusValues)
+		if err != nil {
+			return TicketDetail{}, err
+		}
+		input.Status = &value
+	}
+	if input.Type != nil {
+		value, err := validateEnumField("type", *input.Type, allowedTypeValues)
+		if err != nil {
+			return TicketDetail{}, err
+		}
+		input.Type = &value
+	}
+	if input.Priority != nil {
+		if err := validatePriority(*input.Priority); err != nil {
+			return TicketDetail{}, err
+		}
+	}
+	if input.Assignee != nil {
+		value, err := validateScalarField("assignee", *input.Assignee, true)
+		if err != nil {
+			return TicketDetail{}, err
+		}
+		input.Assignee = &value
+	}
+	if input.Parent != nil {
+		value, err := validateTicketIDField("parent", *input.Parent, true)
+		if err != nil {
+			return TicketDetail{}, err
+		}
+		input.Parent = &value
+	}
+	if input.Tags != nil {
+		value, err := validateTagList(*input.Tags)
+		if err != nil {
+			return TicketDetail{}, err
+		}
+		input.Tags = &value
+	}
+	if input.ExternalRef != nil {
+		value, err := validateScalarField("external_ref", *input.ExternalRef, true)
+		if err != nil {
+			return TicketDetail{}, err
+		}
+		input.ExternalRef = &value
+	}
+
 	info, err := s.ResolveProject(projectName)
 	if err != nil {
 		return TicketDetail{}, err
 	}
 	record, err := ticket.LoadByID(info.TicketDir, id)
 	if err != nil {
-		return TicketDetail{}, err
+		return TicketDetail{}, normalizeTicketError(err)
 	}
 	if err := checkExpectedRevision(record.Path, input.ExpectedRevision); err != nil {
 		return TicketDetail{}, err
@@ -419,15 +505,23 @@ func (s *Service) UpdateTicket(projectName, id string, input UpdateTicketInput) 
 	s.appendMutation(projectName, engine.MutationEntry{
 		TicketID:      record.ID,
 		Operation:     "edit",
-		Source:        input.Source,
+		Source:        source,
 		FieldsChanged: changed,
 	})
 	return s.TicketDetail(projectName, record.ID)
 }
 
 func (s *Service) AddNote(projectName, id string, input NoteInput) (TicketDetail, error) {
+	source, err := normalizeSource(input.Source)
+	if err != nil {
+		return TicketDetail{}, err
+	}
+	id, err = validateTicketIDField("ticket id", id, false)
+	if err != nil {
+		return TicketDetail{}, err
+	}
 	if strings.TrimSpace(input.Text) == "" {
-		return TicketDetail{}, errors.New("note text is required")
+		return TicketDetail{}, validationErrorf("note text is required")
 	}
 	info, err := s.ResolveProject(projectName)
 	if err != nil {
@@ -435,17 +529,13 @@ func (s *Service) AddNote(projectName, id string, input NoteInput) (TicketDetail
 	}
 	record, err := ticket.LoadByID(info.TicketDir, id)
 	if err != nil {
-		return TicketDetail{}, err
+		return TicketDetail{}, normalizeTicketError(err)
 	}
 	if err := checkExpectedRevision(record.Path, input.ExpectedRevision); err != nil {
 		return TicketDetail{}, err
 	}
 
 	ts := s.now().UTC().Format(time.RFC3339)
-	source := input.Source
-	if strings.TrimSpace(source) == "" {
-		source = "web"
-	}
 	header := fmt.Sprintf("**%s [%s]**", ts, source)
 	entry := fmt.Sprintf("%s\n\n%s", header, strings.TrimSpace(input.Text))
 
@@ -470,52 +560,84 @@ func (s *Service) AddNote(projectName, id string, input NoteInput) (TicketDetail
 }
 
 func (s *Service) AddDependency(projectName, id string, input EdgeInput) (TicketDetail, error) {
+	source, err := normalizeSource(input.Source)
+	if err != nil {
+		return TicketDetail{}, err
+	}
+	id, err = validateTicketIDField("ticket id", id, false)
+	if err != nil {
+		return TicketDetail{}, err
+	}
+	targetID, err := validateTicketIDField("target ticket id", input.TargetID, false)
+	if err != nil {
+		return TicketDetail{}, err
+	}
 	info, err := s.ResolveProject(projectName)
 	if err != nil {
 		return TicketDetail{}, err
 	}
 	record, err := ticket.LoadByID(info.TicketDir, id)
 	if err != nil {
-		return TicketDetail{}, err
+		return TicketDetail{}, normalizeTicketError(err)
 	}
 	if err := checkExpectedRevision(record.Path, input.ExpectedRevision); err != nil {
 		return TicketDetail{}, err
 	}
-	depRecord, err := ticket.LoadByID(info.TicketDir, input.TargetID)
+	depRecord, err := ticket.LoadByID(info.TicketDir, targetID)
+	if err != nil {
+		return TicketDetail{}, normalizeTicketError(err)
+	}
+	depID, err := validateTicketIDField("target ticket id", depRecord.ID, false)
 	if err != nil {
 		return TicketDetail{}, err
 	}
 	if record.ID == depRecord.ID {
-		return TicketDetail{}, errors.New("ticket cannot depend on itself")
+		return TicketDetail{}, validationErrorf("ticket cannot depend on itself")
 	}
-	record.Front.Deps = engine.AppendUnique(record.Front.Deps, depRecord.ID)
+	record.Front.Deps = engine.AppendUnique(record.Front.Deps, depID)
 	if err := ticket.SaveRecord(record); err != nil {
 		return TicketDetail{}, err
 	}
 	s.appendMutation(projectName, engine.MutationEntry{
 		TicketID:      record.ID,
 		Operation:     "dep",
-		Source:        input.Source,
+		Source:        source,
 		FieldsChanged: []string{"deps"},
 	})
 	return s.TicketDetail(projectName, record.ID)
 }
 
 func (s *Service) RemoveDependency(projectName, id string, input EdgeInput) (TicketDetail, error) {
+	source, err := normalizeSource(input.Source)
+	if err != nil {
+		return TicketDetail{}, err
+	}
+	id, err = validateTicketIDField("ticket id", id, false)
+	if err != nil {
+		return TicketDetail{}, err
+	}
+	targetID, err := validateTicketIDField("target ticket id", input.TargetID, false)
+	if err != nil {
+		return TicketDetail{}, err
+	}
 	info, err := s.ResolveProject(projectName)
 	if err != nil {
 		return TicketDetail{}, err
 	}
 	record, err := ticket.LoadByID(info.TicketDir, id)
 	if err != nil {
-		return TicketDetail{}, err
+		return TicketDetail{}, normalizeTicketError(err)
 	}
 	if err := checkExpectedRevision(record.Path, input.ExpectedRevision); err != nil {
 		return TicketDetail{}, err
 	}
-	resolvedDepID := input.TargetID
-	if depRecord, err := ticket.LoadByID(info.TicketDir, input.TargetID); err == nil {
-		resolvedDepID = depRecord.ID
+	resolvedDepID := targetID
+	if depRecord, err := ticket.LoadByID(info.TicketDir, targetID); err == nil {
+		depID, err := validateTicketIDField("target ticket id", depRecord.ID, false)
+		if err != nil {
+			return TicketDetail{}, err
+		}
+		resolvedDepID = depID
 	}
 	record.Front.Deps = engine.RemoveValue(record.Front.Deps, resolvedDepID)
 	if err := ticket.SaveRecord(record); err != nil {
@@ -524,43 +646,66 @@ func (s *Service) RemoveDependency(projectName, id string, input EdgeInput) (Tic
 	s.appendMutation(projectName, engine.MutationEntry{
 		TicketID:      record.ID,
 		Operation:     "undep",
-		Source:        input.Source,
+		Source:        source,
 		FieldsChanged: []string{"deps"},
 	})
 	return s.TicketDetail(projectName, record.ID)
 }
 
 func (s *Service) LinkTickets(projectName, id string, input EdgeInput) (TicketDetail, error) {
+	source, err := normalizeSource(input.Source)
+	if err != nil {
+		return TicketDetail{}, err
+	}
+	id, err = validateTicketIDField("ticket id", id, false)
+	if err != nil {
+		return TicketDetail{}, err
+	}
+	targetIDs := input.TargetIDs
+	if len(targetIDs) == 0 && strings.TrimSpace(input.TargetID) != "" {
+		targetIDs = []string{input.TargetID}
+	}
+	if len(targetIDs) == 0 {
+		return TicketDetail{}, validationErrorf("target ticket id is required")
+	}
+	validatedTargetIDs := make([]string, 0, len(targetIDs))
+	for _, targetID := range targetIDs {
+		targetID, err = validateTicketIDField("target ticket id", targetID, false)
+		if err != nil {
+			return TicketDetail{}, err
+		}
+		validatedTargetIDs = append(validatedTargetIDs, targetID)
+	}
 	info, err := s.ResolveProject(projectName)
 	if err != nil {
 		return TicketDetail{}, err
 	}
 	sourceRecord, err := ticket.LoadByID(info.TicketDir, id)
 	if err != nil {
-		return TicketDetail{}, err
+		return TicketDetail{}, normalizeTicketError(err)
 	}
 	if err := checkExpectedRevision(sourceRecord.Path, input.ExpectedRevision); err != nil {
 		return TicketDetail{}, err
 	}
-
-	targetIDs := input.TargetIDs
-	if len(targetIDs) == 0 && strings.TrimSpace(input.TargetID) != "" {
-		targetIDs = []string{input.TargetID}
-	}
-	if len(targetIDs) == 0 {
-		return TicketDetail{}, errors.New("target ticket id is required")
+	sourceRecordID, err := validateTicketIDField("source ticket id", sourceRecord.ID, false)
+	if err != nil {
+		return TicketDetail{}, err
 	}
 
 	targets := map[string]ticket.Record{}
-	for _, targetID := range targetIDs {
+	for _, targetID := range validatedTargetIDs {
 		target, err := ticket.LoadByID(info.TicketDir, targetID)
+		if err != nil {
+			return TicketDetail{}, normalizeTicketError(err)
+		}
+		targetRecordID, err := validateTicketIDField("target ticket id", target.ID, false)
 		if err != nil {
 			return TicketDetail{}, err
 		}
-		if target.ID == sourceRecord.ID {
-			return TicketDetail{}, errors.New("ticket cannot link to itself")
+		if targetRecordID == sourceRecordID {
+			return TicketDetail{}, validationErrorf("ticket cannot link to itself")
 		}
-		targets[target.ID] = target
+		targets[targetRecordID] = target
 	}
 
 	sortedIDs := make([]string, 0, len(targets))
@@ -577,36 +722,56 @@ func (s *Service) LinkTickets(projectName, id string, input EdgeInput) (TicketDe
 	}
 	for _, targetID := range sortedIDs {
 		target := targets[targetID]
-		target.Front.Links = engine.AppendUnique(target.Front.Links, sourceRecord.ID)
+		target.Front.Links = engine.AppendUnique(target.Front.Links, sourceRecordID)
 		if err := ticket.SaveRecord(target); err != nil {
 			return TicketDetail{}, err
 		}
 	}
 	s.appendMutation(projectName, engine.MutationEntry{
-		TicketID:      sourceRecord.ID,
+		TicketID:      sourceRecordID,
 		Operation:     "link",
-		Source:        input.Source,
+		Source:        source,
 		FieldsChanged: []string{"links"},
 	})
-	return s.TicketDetail(projectName, sourceRecord.ID)
+	return s.TicketDetail(projectName, sourceRecordID)
 }
 
 func (s *Service) UnlinkTicket(projectName, id string, input EdgeInput) (TicketDetail, error) {
+	source, err := normalizeSource(input.Source)
+	if err != nil {
+		return TicketDetail{}, err
+	}
+	id, err = validateTicketIDField("ticket id", id, false)
+	if err != nil {
+		return TicketDetail{}, err
+	}
+	targetID, err := validateTicketIDField("target ticket id", input.TargetID, false)
+	if err != nil {
+		return TicketDetail{}, err
+	}
 	info, err := s.ResolveProject(projectName)
 	if err != nil {
 		return TicketDetail{}, err
 	}
 	sourceRecord, err := ticket.LoadByID(info.TicketDir, id)
 	if err != nil {
-		return TicketDetail{}, err
+		return TicketDetail{}, normalizeTicketError(err)
 	}
 	if err := checkExpectedRevision(sourceRecord.Path, input.ExpectedRevision); err != nil {
 		return TicketDetail{}, err
 	}
-	resolvedTargetID := input.TargetID
-	targetRecord, targetErr := ticket.LoadByID(info.TicketDir, input.TargetID)
+	sourceRecordID, err := validateTicketIDField("source ticket id", sourceRecord.ID, false)
+	if err != nil {
+		return TicketDetail{}, err
+	}
+	resolvedTargetID := targetID
+	targetRecord, targetErr := ticket.LoadByID(info.TicketDir, targetID)
 	if targetErr == nil {
-		resolvedTargetID = targetRecord.ID
+		targetRecordID, err := validateTicketIDField("target ticket id", targetRecord.ID, false)
+		if err != nil {
+			return TicketDetail{}, err
+		}
+		resolvedTargetID = targetRecordID
 	}
 
 	sourceRecord.Front.Links = engine.RemoveValue(sourceRecord.Front.Links, resolvedTargetID)
@@ -614,18 +779,18 @@ func (s *Service) UnlinkTicket(projectName, id string, input EdgeInput) (TicketD
 		return TicketDetail{}, err
 	}
 	if targetErr == nil {
-		targetRecord.Front.Links = engine.RemoveValue(targetRecord.Front.Links, sourceRecord.ID)
+		targetRecord.Front.Links = engine.RemoveValue(targetRecord.Front.Links, sourceRecordID)
 		if err := ticket.SaveRecord(targetRecord); err != nil {
 			return TicketDetail{}, err
 		}
 	}
 	s.appendMutation(projectName, engine.MutationEntry{
-		TicketID:      sourceRecord.ID,
+		TicketID:      sourceRecordID,
 		Operation:     "unlink",
-		Source:        input.Source,
+		Source:        source,
 		FieldsChanged: []string{"links"},
 	})
-	return s.TicketDetail(projectName, sourceRecord.ID)
+	return s.TicketDetail(projectName, sourceRecordID)
 }
 
 func (s *Service) ResolveProject(projectName string) (ProjectInfo, error) {
@@ -899,6 +1064,115 @@ func diagnosticForError(file string, err error) Diagnostic {
 		Message: err.Error(),
 		File:    file,
 	}
+}
+
+func validationErrorf(format string, args ...any) error {
+	return fmt.Errorf("%w: %s", ErrValidation, fmt.Sprintf(format, args...))
+}
+
+func normalizeSource(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		value = "web"
+	}
+	return validateScalarField("source", value, false)
+}
+
+func normalizePriority(value *int) (int, error) {
+	if value == nil {
+		return 2, nil
+	}
+	if err := validatePriority(*value); err != nil {
+		return 0, err
+	}
+	return *value, nil
+}
+
+func validatePriority(value int) error {
+	if value < 0 || value > 4 {
+		return validationErrorf("priority must be between 0 and 4")
+	}
+	return nil
+}
+
+func validateEnumField(name, value string, allowed []string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", validationErrorf("%s is required", name)
+	}
+	if containsControlChar(value) {
+		return "", validationErrorf("%s contains control characters", name)
+	}
+	for _, candidate := range allowed {
+		if value == candidate {
+			return value, nil
+		}
+	}
+	return "", validationErrorf("%s must be one of %s", name, strings.Join(allowed, ", "))
+}
+
+func validateScalarField(name, value string, allowEmpty bool) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		if allowEmpty {
+			return "", nil
+		}
+		return "", validationErrorf("%s is required", name)
+	}
+	if containsControlChar(value) {
+		return "", validationErrorf("%s contains control characters", name)
+	}
+	return value, nil
+}
+
+func validateTicketIDField(name, value string, allowEmpty bool) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		if allowEmpty {
+			return "", nil
+		}
+		return "", validationErrorf("%s is required", name)
+	}
+	if value == "." || value == ".." || containsControlChar(value) || strings.ContainsAny(value, " /\\,[]") {
+		return "", validationErrorf("invalid %s %q", name, value)
+	}
+	return value, nil
+}
+
+func validateTagList(values []string) ([]string, error) {
+	out := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		tag := strings.TrimSpace(value)
+		if tag == "" {
+			continue
+		}
+		if containsControlChar(tag) || strings.ContainsAny(tag, ",[]") {
+			return nil, validationErrorf("invalid tag %q", tag)
+		}
+		if _, ok := seen[tag]; ok {
+			continue
+		}
+		seen[tag] = struct{}{}
+		out = append(out, tag)
+	}
+	return out, nil
+}
+
+func containsControlChar(value string) bool {
+	return strings.IndexFunc(value, func(r rune) bool {
+		return r < 0x20 || r == 0x7f
+	}) >= 0
+}
+
+func normalizeTicketError(err error) error {
+	if errors.Is(err, ticket.ErrTicketNotFound) {
+		return ErrTicketNotFound
+	}
+	if errors.Is(err, ticket.ErrAmbiguousID) {
+		return validationErrorf("%s", err.Error())
+	}
+	return err
 }
 
 func dirExists(path string) bool {

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -192,6 +193,54 @@ func TestWriteWebStateUsesOwnerOnlyPermissions(t *testing.T) {
 	}
 	if got := info.Mode().Perm(); got != 0600 {
 		t.Fatalf("web state permissions = %v, want 0600", got)
+	}
+}
+
+func TestWebStatusJSONOmitsStaleURL(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	pidPath, err := webPIDPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	statePath, err := webStatePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const stalePID = 0
+	if err := writePIDFile(pidPath, stalePID); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeWebState(statePath, webState{
+		PID:   stalePID,
+		URL:   "http://127.0.0.1:7420/?token=secret",
+		Token: "secret",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, err := runCmd(t, "", "--json", "web", "status")
+	if err != nil {
+		t.Fatalf("web status: %v", err)
+	}
+	var envelope struct {
+		Data struct {
+			Running bool   `json:"running"`
+			URL     string `json:"url"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &envelope); err != nil {
+		t.Fatalf("parse status json: %v output=%q", err, out)
+	}
+	if envelope.Data.Running {
+		t.Fatalf("expected stale pid to be reported not running")
+	}
+	if envelope.Data.URL != "" {
+		t.Fatalf("expected stale token URL to be omitted, got %q", envelope.Data.URL)
+	}
+	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+		t.Fatalf("expected stale state file removed, stat err=%v", err)
 	}
 }
 

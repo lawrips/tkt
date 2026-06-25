@@ -53,6 +53,7 @@ func runWebRun(ctx context, args []string) error {
 		return err
 	}
 	defer listener.Close()
+	server.SetAddr(listener.Addr().String())
 
 	url := server.URLFor(listener)
 	if statePath != "" {
@@ -150,9 +151,18 @@ func runWebStart(ctx context, args []string) error {
 	}
 
 	state := waitForWebState(statePath, pid, 2*time.Second)
+	startStatus := "started"
+	if state.URL == "" {
+		if _, running := serveRunningPID(pidPath); !running {
+			_ = os.Remove(pidPath)
+			_ = os.Remove(statePath)
+			return fmt.Errorf("web process exited before reporting ready; see log: %s", logPath)
+		}
+		startStatus = "starting"
+	}
 	if ctx.json {
 		return emitJSON(ctx, map[string]any{
-			"status":     "started",
+			"status":     startStatus,
 			"pid":        pid,
 			"pid_file":   pidPath,
 			"log_file":   logPath,
@@ -161,7 +171,7 @@ func runWebStart(ctx context, args []string) error {
 		})
 	}
 
-	_, _ = fmt.Fprintf(ctx.stdout, "web started (pid %d, log: %s)\n", pid, logPath)
+	_, _ = fmt.Fprintf(ctx.stdout, "web %s (pid %d, log: %s)\n", startStatus, pid, logPath)
 	if state.URL != "" {
 		_, _ = fmt.Fprintln(ctx.stdout, "url:")
 		_, _ = fmt.Fprintln(ctx.stdout, state.URL)
@@ -233,6 +243,7 @@ func runWebStatus(ctx context, args []string) error {
 	if !running {
 		_ = os.Remove(pidPath)
 		_ = os.Remove(statePath)
+		state = webState{}
 	}
 
 	if ctx.json {

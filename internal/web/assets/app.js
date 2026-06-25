@@ -541,7 +541,7 @@
         </section>
       `;
     }
-    const entries = trimmed.split(/\n---\n/).map(entry => entry.trim()).filter(Boolean);
+    const entries = splitNoteEntries(trimmed);
     const items = (entries.length > 1 ? entries : [trimmed]).map(entry => `
       <div class="note-entry">
         <div class="note-marker" aria-hidden="true"></div>
@@ -554,6 +554,16 @@
         <div class="note-timeline">${items}</div>
       </section>
     `;
+  }
+
+  function splitNoteEntries(content) {
+    const ruleSeparated = content.split(/\n---\n/).map(entry => entry.trim()).filter(Boolean);
+    if (ruleSeparated.length > 1) return ruleSeparated;
+    const headerSeparated = content
+      .split(/\n{2,}(?=\*\*\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/)
+      .map(entry => entry.trim())
+      .filter(Boolean);
+    return headerSeparated.length ? headerSeparated : [content];
   }
 
   function docSection(title, content) {

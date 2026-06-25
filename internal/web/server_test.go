@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -69,6 +70,44 @@ func TestAPITokenRequired(t *testing.T) {
 	}
 }
 
+// TestAPITokenNotWrittenToStdoutOrStderr asserts the token never leaves the
+// process through stdout/stderr while handling a request. The server performs
+// no request logging by design; this locks that property in.
+func TestAPITokenNotWrittenToStdoutOrStderr(t *testing.T) {
+	const token = "leakguard-token-value"
+	_, repo, _ := setupWebProject(t)
+	server, err := New(Options{Token: token, CWD: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	origOut := os.Stdout
+	origErr := os.Stderr
+	rOut, wOut, _ := os.Pipe()
+	rErr, wErr, _ := os.Pipe()
+	os.Stdout = wOut
+	os.Stderr = wErr
+	defer func() {
+		os.Stdout = origOut
+		os.Stderr = origErr
+		wOut.Close()
+		wErr.Close()
+	}()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/session", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	wOut.Close()
+	wErr.Close()
+	outBytes, _ := io.ReadAll(rOut)
+	errBytes, _ := io.ReadAll(rErr)
+	if strings.Contains(string(outBytes), token) || strings.Contains(string(errBytes), token) {
+		t.Fatalf("token leaked to stdout/stderr: out=%q err=%q", outBytes, errBytes)
+	}
+}
+
 func TestAPIInvalidTokenRejected(t *testing.T) {
 	server, err := New(Options{Token: "secret"})
 	if err != nil {
@@ -98,6 +137,36 @@ func TestAPIHeaderTokenAccepted(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected ok, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAPIQueryTokenRejected(t *testing.T) {
+	server, err := New(Options{Token: "secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/session?token=secret", nil)
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected unauthorized for query-token API request, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestBootstrapTokenURLServesIndex(t *testing.T) {
+	server, err := New(Options{Token: "secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/?token=secret", nil)
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected index for bootstrap token URL, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -269,6 +338,7 @@ func TestEmbeddedAppIncludesMarkdownRendering(t *testing.T) {
 		"markdown-body",
 		"sanitizeHTML",
 		"sectionHeading",
+		"splitNoteEntries",
 		"notesContent",
 	} {
 		if !strings.Contains(combined, required) {
@@ -352,6 +422,76 @@ func TestCreateTicketViaAPI(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), `"operation":"create"`) || !strings.Contains(string(raw), `"source":"test"`) {
 		t.Fatalf("mutation log missing create/source: %s", string(raw))
+	}
+}
+
+func TestCreateTicketDefaultsPriorityViaAPI(t *testing.T) {
+	_, repo, ticketDir := setupWebProject(t)
+	server, err := New(Options{Token: "secret", CWD: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := bytes.NewReader([]byte(`{"source":"test","id":"c-default","title":"Default priority"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/demo/tickets", body)
+	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected created, got %d: %s", rec.Code, rec.Body.String())
+	}
+	record, err := ticket.LoadByID(ticketDir, "c-default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Front.Priority != 2 {
+		t.Fatalf("expected default priority 2, got %d", record.Front.Priority)
+	}
+}
+
+func TestValidationErrorsReturnBadRequest(t *testing.T) {
+	_, repo, _ := setupWebProject(t)
+	server, err := New(Options{Token: "secret", CWD: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := bytes.NewReader([]byte(`{"source":"test","id":"bad/id","title":"Bad id"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/demo/tickets", body)
+	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "validation_error") {
+		t.Fatalf("expected validation_error, got %s", rec.Body.String())
+	}
+}
+
+func TestFrontmatterInjectionRejectedViaAPI(t *testing.T) {
+	_, repo, _ := setupWebProject(t)
+	server, err := New(Options{Token: "secret", CWD: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := bytes.NewReader([]byte("{\"source\":\"test\",\"id\":\"c-bad-parent\",\"title\":\"Bad parent\",\"parent\":\"c-parent\\nstatus: closed\"}"))
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/demo/tickets", body)
+	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "validation_error") {
+		t.Fatalf("expected validation_error, got %s", rec.Body.String())
 	}
 }
 
@@ -441,14 +581,60 @@ func TestPathTraversalRejected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodGet, "/api/projects/demo/tickets/..%2Fsecret", nil)
-	req.Header.Set("X-TKT-Token", "secret")
-	rec := httptest.NewRecorder()
+	for _, tc := range []struct {
+		name string
+		url  string
+	}{
+		{"encoded dotdot slash", "/api/projects/demo/tickets/..%2Fsecret"},
+		{"raw dotdot", "/api/projects/demo/tickets/.."},
+		{"dot segment", "/api/projects/demo/tickets/."},
+		{"encoded backslash", "/api/projects/demo/tickets/..%5Csecret"},
+		{"raw backslash", "/api/projects/demo/tickets/..\\secret"},
+		{"traversal in project", "/api/projects/..%2Fdemo/tickets/c-one"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.url, nil)
+			req.Header.Set("X-TKT-Token", "secret")
+			rec := httptest.NewRecorder()
 
+			server.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusBadRequest && rec.Code != http.StatusNotFound {
+				t.Fatalf("expected bad request or not found, got %d: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestRelationTargetPathTraversalRejected(t *testing.T) {
+	_, repo, ticketDir := setupWebProject(t)
+	writeWebTicket(t, ticketDir, "c-one", "One")
+	outsidePath := filepath.Join(repo, "outside.md")
+	outside := "---\nid: outside\nstatus: open\ndeps: []\nlinks: []\ncreated: 2026-01-01T00:00:00Z\ntype: task\npriority: 2\n---\n# Outside\n"
+	if err := os.WriteFile(outsidePath, []byte(outside), 0644); err != nil {
+		t.Fatal(err)
+	}
+	server, err := New(Options{Token: "secret", CWD: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := bytes.NewReader([]byte(`{"source":"test","target_id":"../outside"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/demo/tickets/c-one/links", body)
+	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected bad request, got %d: %s", rec.Code, rec.Body.String())
+	}
+	raw, err := os.ReadFile(outsidePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != outside {
+		t.Fatalf("outside ticket changed:\n%s", string(raw))
 	}
 }
 
@@ -459,6 +645,7 @@ func TestUnexpectedOriginRejectedForMutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	server.SetAddr("127.0.0.1:7420")
 	req := httptest.NewRequest(http.MethodPatch, "/api/projects/demo/tickets/c-one", bytes.NewReader([]byte(`{}`)))
 	req.Header.Set("X-TKT-Token", "secret")
 	req.Header.Set("Origin", "https://example.com")
@@ -468,6 +655,46 @@ func TestUnexpectedOriginRejectedForMutation(t *testing.T) {
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected forbidden, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMismatchedLoopbackPortOriginRejected(t *testing.T) {
+	_, repo, ticketDir := setupWebProject(t)
+	writeWebTicket(t, ticketDir, "c-one", "Original")
+	server, err := New(Options{Token: "secret", CWD: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.SetAddr("127.0.0.1:7420")
+	req := httptest.NewRequest(http.MethodPatch, "/api/projects/demo/tickets/c-one", bytes.NewReader([]byte(`{}`)))
+	req.Header.Set("X-TKT-Token", "secret")
+	req.Header.Set("Origin", "http://127.0.0.1:9999")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected forbidden for mismatched loopback port, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMatchingLoopbackPortOriginAccepted(t *testing.T) {
+	_, repo, ticketDir := setupWebProject(t)
+	writeWebTicket(t, ticketDir, "c-one", "Original")
+	server, err := New(Options{Token: "secret", CWD: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.SetAddr("127.0.0.1:7420")
+	req := httptest.NewRequest(http.MethodPatch, "/api/projects/demo/tickets/c-one", bytes.NewReader([]byte(`{"source":"test","revision":{"hash":"","mod_time":""},"fields":{}}`)))
+	req.Header.Set("X-TKT-Token", "secret")
+	req.Header.Set("Origin", "http://127.0.0.1:7420")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code == http.StatusForbidden {
+		t.Fatalf("matching loopback port origin should not be forbidden, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

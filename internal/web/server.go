@@ -2,6 +2,7 @@ package web
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -31,6 +32,7 @@ type Server struct {
 	cwd             string
 	projectOverride string
 	version         string
+	addr            string
 }
 
 type apiError struct {
@@ -74,6 +76,12 @@ func GenerateToken() (string, error) {
 
 func (s *Server) Token() string {
 	return s.token
+}
+
+// SetAddr records the server's resolved listen address so origin checks can
+// accept only the active server's own origin rather than any localhost port.
+func (s *Server) SetAddr(addr string) {
+	s.addr = addr
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -439,17 +447,19 @@ func (s *Server) authorized(r *http.Request) bool {
 	if s.token == "" {
 		return false
 	}
-	if token := strings.TrimSpace(r.URL.Query().Get("token")); token != "" {
-		return token == s.token
-	}
 	if token := strings.TrimSpace(r.Header.Get("X-TKT-Token")); token != "" {
-		return token == s.token
+		return tokenEqual(token, s.token)
 	}
 	auth := strings.TrimSpace(r.Header.Get("Authorization"))
 	if strings.HasPrefix(strings.ToLower(auth), "bearer ") {
-		return strings.TrimSpace(auth[len("bearer "):]) == s.token
+		return tokenEqual(strings.TrimSpace(auth[len("bearer "):]), s.token)
 	}
 	return false
+}
+
+// tokenEqual compares bearer tokens in constant time to avoid timing oracles.
+func tokenEqual(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
 func (s *Server) allowedOrigin(r *http.Request) bool {
@@ -462,7 +472,22 @@ func (s *Server) allowedOrigin(r *http.Request) bool {
 		return false
 	}
 	host := parsed.Hostname()
-	return host == "127.0.0.1" || host == "localhost" || host == "::1"
+	if host != "127.0.0.1" && host != "localhost" && host != "::1" {
+		return false
+	}
+	// When the server knows its own address, require the origin port to match
+	// so a different local app on another localhost port cannot reach this API.
+	if s.addr != "" {
+		_, serverPort, err := net.SplitHostPort(s.addr)
+		if err == nil && serverPort != "" {
+			originPort := parsed.Port()
+			if originPort == "" {
+				return false
+			}
+			return originPort == serverPort
+		}
+	}
+	return true
 }
 
 func isMutationMethod(method string) bool {
@@ -482,7 +507,7 @@ type createTicketRequest struct {
 	Design             string   `json:"design"`
 	AcceptanceCriteria string   `json:"acceptance_criteria"`
 	Type               string   `json:"type"`
-	Priority           int      `json:"priority"`
+	Priority           *int     `json:"priority"`
 	Assignee           string   `json:"assignee"`
 	Parent             string   `json:"parent"`
 	Tags               []string `json:"tags"`
@@ -620,9 +645,17 @@ func writeAppError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "not_found", "Ticket not found.", nil)
 	case errors.Is(err, app.ErrStaleRevision):
 		writeError(w, http.StatusConflict, "stale_revision", "Ticket changed on disk. Refresh before saving.", nil)
+	case errors.Is(err, app.ErrValidation):
+		writeError(w, http.StatusBadRequest, "validation_error", validationMessage(err), nil)
 	default:
 		writeError(w, http.StatusInternalServerError, "internal_error", err.Error(), nil)
 	}
+}
+
+func validationMessage(err error) string {
+	message := err.Error()
+	prefix := app.ErrValidation.Error() + ": "
+	return strings.TrimPrefix(message, prefix)
 }
 
 func Listen(addr string) (net.Listener, error) {

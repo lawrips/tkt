@@ -132,6 +132,113 @@ func TestUpdateTicketWritesMutationLog(t *testing.T) {
 	}
 }
 
+func TestCreateTicketRejectsUnsafeFrontmatterFields(t *testing.T) {
+	_, repo, _ := setupProject(t)
+	svc := New(Options{CWD: repo})
+	priority := 2
+	invalidPriority := 5
+
+	tests := []struct {
+		name  string
+		input CreateTicketInput
+	}{
+		{
+			name: "path-like id",
+			input: CreateTicketInput{
+				ID:       "../outside",
+				Title:    "Bad ID",
+				Type:     "task",
+				Priority: &priority,
+			},
+		},
+		{
+			name: "invalid type",
+			input: CreateTicketInput{
+				ID:       "c-bad-type",
+				Title:    "Bad type",
+				Type:     "project",
+				Priority: &priority,
+			},
+		},
+		{
+			name: "invalid priority",
+			input: CreateTicketInput{
+				ID:       "c-bad-priority",
+				Title:    "Bad priority",
+				Type:     "task",
+				Priority: &invalidPriority,
+			},
+		},
+		{
+			name: "parent newline",
+			input: CreateTicketInput{
+				ID:       "c-bad-parent",
+				Title:    "Bad parent",
+				Type:     "task",
+				Priority: &priority,
+				Parent:   "c-parent\nstatus: closed",
+			},
+		},
+		{
+			name: "tag delimiter",
+			input: CreateTicketInput{
+				ID:       "c-bad-tag",
+				Title:    "Bad tag",
+				Type:     "task",
+				Priority: &priority,
+				Tags:     []string{"safe", "bad,tag"},
+			},
+		},
+		{
+			name: "external ref newline",
+			input: CreateTicketInput{
+				ID:          "c-bad-ref",
+				Title:       "Bad ref",
+				Type:        "task",
+				Priority:    &priority,
+				ExternalRef: "https://example.test\nstatus: closed",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := svc.CreateTicket("demo", tt.input)
+			if !errors.Is(err, ErrValidation) {
+				t.Fatalf("expected validation error, got %v", err)
+			}
+		})
+	}
+}
+
+func TestUpdateTicketRejectsUnsafeFrontmatterFields(t *testing.T) {
+	_, repo, ticketDir := setupProject(t)
+	writeTicket(t, ticketDir, "c-one", "Original")
+	svc := New(Options{CWD: repo})
+	detail, err := svc.TicketDetail("demo", "c-one")
+	if err != nil {
+		t.Fatalf("detail: %v", err)
+	}
+
+	parent := "c-parent\nstatus: closed"
+	_, err = svc.UpdateTicket("demo", "c-one", UpdateTicketInput{
+		Source:           "test",
+		ExpectedRevision: &detail.Revision,
+		Parent:           &parent,
+	})
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("expected validation error, got %v", err)
+	}
+
+	record, err := ticket.LoadByID(ticketDir, "c-one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Front.Status != "open" || record.Front.Parent != "" {
+		t.Fatalf("ticket frontmatter changed after rejected update: %#v", record.Front)
+	}
+}
+
 func TestAddNoteAndLinkDependencyMutations(t *testing.T) {
 	_, repo, ticketDir := setupProject(t)
 	writeTicket(t, ticketDir, "c-one", "One")
