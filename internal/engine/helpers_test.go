@@ -402,19 +402,19 @@ func TestSortRecords(t *testing.T) {
 	records := []ticket.Record{
 		{
 			ID:      "c",
-			Front:   ticket.Frontmatter{ID: "c", Priority: 2, Created: "2025-01-03T00:00:00Z"},
+			Front:   ticket.Frontmatter{ID: "c", Priority: 2, Type: "task", Created: "2025-01-03T00:00:00Z"},
 			Body:    ticket.Body{Title: "Zebra"},
 			ModTime: now.Add(-3 * time.Hour),
 		},
 		{
 			ID:      "a",
-			Front:   ticket.Frontmatter{ID: "a", Priority: 0, Created: "2025-01-01T00:00:00Z"},
+			Front:   ticket.Frontmatter{ID: "a", Priority: 0, Type: "bug", Created: "2025-01-01T00:00:00Z"},
 			Body:    ticket.Body{Title: "Apple"},
 			ModTime: now.Add(-1 * time.Hour),
 		},
 		{
 			ID:      "b",
-			Front:   ticket.Frontmatter{ID: "b", Priority: 1, Created: "2025-01-02T00:00:00Z"},
+			Front:   ticket.Frontmatter{ID: "b", Priority: 1, Type: "feature", Created: "2025-01-02T00:00:00Z"},
 			Body:    ticket.Body{Title: "Mango"},
 			ModTime: now.Add(-2 * time.Hour),
 		},
@@ -436,6 +436,8 @@ func TestSortRecords(t *testing.T) {
 		{"by priority desc", "priority:desc", []string{"c", "b", "a"}},
 		{"by title asc", "title", []string{"a", "b", "c"}},
 		{"by title desc", "title:desc", []string{"c", "b", "a"}},
+		{"by type asc", "type", []string{"a", "b", "c"}},
+		{"by type desc", "type:desc", []string{"c", "b", "a"}},
 	}
 
 	for _, tt := range tests {

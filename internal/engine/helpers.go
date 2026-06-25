@@ -294,7 +294,7 @@ func ToSnakeCase(value string) string {
 
 // SortRecords sorts records in place by the given field.
 // Append ":desc" for descending order (e.g. "created:desc").
-// Default is ascending. Supported fields: id, created, modified, priority, title.
+// Default is ascending. Supported fields: id, created, modified, priority, title, type.
 // Returns an error for unknown fields. No-op if sortBy is empty.
 func SortRecords(records []ticket.Record, sortBy string) error {
 	if sortBy == "" {
@@ -323,8 +323,12 @@ func SortRecords(records []ticket.Record, sortBy string) error {
 		less = func(i, j int) bool {
 			return strings.ToLower(records[i].Body.Title) < strings.ToLower(records[j].Body.Title)
 		}
+	case "type":
+		less = func(i, j int) bool {
+			return records[i].Front.Type < records[j].Front.Type
+		}
 	default:
-		return fmt.Errorf("unknown sort field: %s (valid: id, created, modified, priority, title)", sortBy)
+		return fmt.Errorf("unknown sort field: %s (valid: id, created, modified, priority, title, type)", sortBy)
 	}
 
 	if desc {

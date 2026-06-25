@@ -51,6 +51,28 @@ message contains `Closes: [ticket-id]`, the ticket is automatically closed.
 
 Verify: `tkt serve status` should show the daemon running.
 
+### 4. Verify Setup Health
+
+```bash
+tkt doctor
+```
+
+Doctor checks config, project registration, ticket storage, workflow guidance,
+central-store git state, serve/watch status, and known agent instruction files.
+It prints copy-paste remediation guidance but does not edit files, start/stop
+services, or run git fetch/pull/push.
+
+### 5. Optional Local Web UI
+
+```bash
+tkt web
+```
+
+The web UI runs on localhost with a per-launch token. It can browse and edit
+configured tickets and show doctor-style health checks. It is separate from
+`tkt serve`; it does not run sync, push, pull, fetch, arbitrary shell commands,
+or start/stop the background service.
+
 ## After Setup
 
 Tell the user to start a new agent session. MCP tools and agent instructions are loaded
@@ -63,7 +85,7 @@ Also let them know:
 
 2. **New projects**: Run `tkt init` in each new project directory.
 
-3. **Quick start**: `tkt help`, `tkt tui`, `tkt workflow`.
+3. **Quick start**: `tkt help`, `tkt doctor`, `tkt tui`, `tkt web`, `tkt workflow`.
 
 4. **Custom store path**: Optionally set `TKT_ROOT=/path/to/store` to override the default `~/.tickets`
    location. Must be an absolute path.

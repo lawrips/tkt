@@ -72,8 +72,10 @@ func rootHelpSections() []helpSection {
 			title: "Workflow & Tools",
 			entries: []helpEntry{
 				{"workflow", "Ticket lifecycle, commit format, and conventions  ★"},
+				{"doctor", "Audit local setup and agent health"},
 				{"tui", "Interactive terminal UI"},
 				{"serve start|stop|status|logs", "Manage background watcher daemon"},
+				{"web [start|status]", "Run local browser control plane"},
 				{"mcp", "Start MCP stdio JSON-RPC server"},
 			},
 		},
@@ -254,6 +256,18 @@ JSON fields: id, status, type, priority, title, description,
   created, assignee, parent, notes, external_ref
 Body sections (## Heading) become snake_case fields.`
 
+const doctorDetail = `Runs safe local checks for TKT setup health.
+
+Checks include config loading, project resolution, ticket store health,
+workflow guidance, central-store git status, background serve/watch status,
+and known agent instruction files. The command does not run fetch, pull,
+push, start or stop services, edit files, or print instruction file contents.
+
+Examples:
+  tkt doctor
+  tkt doctor --json
+  tkt --project my-project doctor`
+
 const addNoteDetail = `Appends a timestamped note to the ticket's Notes section.
 If no text argument is given, reads from stdin.
 
@@ -312,6 +326,22 @@ const recomputeDetail = `Options:
 
 Rebuilds the commit journal from git log. Useful after initial
 setup or if the journal gets out of sync with git history.`
+
+const webDetail = `Subcommands:
+  tkt web                     Run local web server in foreground
+  tkt web run                 Run local web server in foreground
+  tkt web start               Start local web server in background
+  tkt web stop                Stop background web server
+  tkt web status              Show background web server status
+  tkt web logs                Show recent web log output
+
+The web server binds to localhost by default and uses a per-launch token.
+The default address is 127.0.0.1:7420; use --addr=127.0.0.1:0 for an
+ephemeral port.
+It can run before tkt init to show setup guidance and doctor-style health.
+It manages only the web process, not the watch/sync service, and does not run
+sync, push, pull, fetch, arbitrary shell commands, or arbitrary filesystem
+browsing.`
 
 func setDetail(commands map[string]command, name, detail string) {
 	cmd := commands[name]
