@@ -8,11 +8,11 @@ tkt is somewhat opinionated and tailored to how I work and the main tool I use f
 
 These are some additions that have been helpful for me:
 
-- **TUI** — terminal UI for viewing, basic editing (status, priority etc) and monitoring (Bubble Tea)
+- **TUI** — optional terminal UI for viewing, basic editing (status, priority etc) and monitoring (Bubble Tea)
 - **Central ticket store** — tickets live in `~/.tickets`, keeping working directories and commit history clean
 - **Service mode** — pushes ticket changes to the central repo, auto-closes tickets from commits and maintains an append-only journal, simplifying manual bookkeeping
 - **Doctor** — safe local setup checks for config, project registration, central store, workflow, serve/watch, and agent instructions
-- **Web control plane** — local browser UI for browsing, editing, and checking ticket health
+- **Web control plane** — optional localhost-only browser workbench for browsing, editing, and checking ticket health
 - **Composite views** — epic-view, context, dashboard, progress — all computed over the same underlying data
 - **MCP server** — agents interact through typed tool schemas instead of CLI string parsing, to improve command use and source attribution
 
@@ -46,12 +46,12 @@ tkt init
 ```bash
 tkt help              # see all commands
 tkt doctor            # audit setup health
-tkt tui               # open the terminal UI
-tkt web               # open the local browser workbench
+tkt tui               # optional terminal UI
+tkt web               # optional local browser workbench
 tkt workflow          # user-editable workflow guide from ~/.tkt/workflow.md
 ```
 
-There are CLI commands for creating and editing tickets, but I just ask Claude / Codex to do it.
+There are CLI commands for creating and editing tickets, but I just ask Claude / Codex to do it. The TUI and web workbench are optional human interfaces; the CLI, MCP, central store, and service mode do not require either UI to be running.
 
 ## Features
 
@@ -59,7 +59,7 @@ Some of the main categories of features I built for this tool:
 
 ### TUI
 
-`tkt tui` opens an interactive terminal interface built with [Bubble Tea](https://github.com/charmbracelet/bubbletea). Three views:
+`tkt tui` opens an optional interactive terminal interface built with [Bubble Tea](https://github.com/charmbracelet/bubbletea). Three views:
 
 - **Board** — kanban columns grouped by status (open, in_progress, needs_testing, closed)
 - **Detail** — full ticket view with description, notes, deps, linked commits
@@ -103,25 +103,25 @@ Doctor gives copy-paste remediation commands, but it does not apply fixes itself
 
 ### Web Control Plane
 
-`tkt web` starts a localhost-only browser workbench from the same Go binary. It serves embedded HTML/CSS/JS, generates a per-launch token, and exposes structured API routes for configured projects and tickets.
+`tkt web` is an optional browser workbench for humans who want to inspect and edit tickets outside the terminal. You do not need it for the CLI, MCP tools, central ticket store, or `tkt serve` sync/watch workflow.
+
+The web interface runs from the same Go binary; there is no separate app server to install. By default it binds only to `127.0.0.1:7420`, serves embedded HTML/CSS/JS, generates a per-launch token, and prints an authenticated local URL.
 
 Use it to browse tickets, inspect context, edit structured fields, add notes, manage deps/links, and view the same setup health surfaced by `tkt doctor`.
 
-The web process is separate from `tkt serve`. It does not run sync, push, pull, fetch, arbitrary shell commands, arbitrary filesystem browsing, or start/stop the serve/watch process. It can run before `tkt init`; in an uninitialized repo it shows setup guidance and any configured projects it can safely read.
+The web process is separate from `tkt serve`. Starting the web workbench does not start sync/watch, and stopping it does not stop sync/watch. It does not run sync, push, pull, fetch, arbitrary shell commands, arbitrary filesystem browsing, or start/stop the serve/watch process. It can run before `tkt init`; in an uninitialized repo it shows setup guidance and any configured projects it can safely read.
 
 Commands:
 
 ```bash
-tkt web              # foreground server on 127.0.0.1:7420, prints an authenticated URL
+tkt web              # foreground localhost server, prints an authenticated URL
 tkt web start        # background web process
 tkt web status       # web process status only
 tkt web stop         # stops only the web process
 tkt web logs         # web process logs only
 ```
 
-Use `--addr=127.0.0.1:0` when you want an ephemeral port instead of the stable
-default. For remote access, keep the server bound to localhost and use SSH port
-forwarding, for example `ssh -L 7420:127.0.0.1:7420 <host>`.
+Use `--addr=127.0.0.1:0` when you want an ephemeral port instead of the stable default. For remote access, keep the server bound to localhost and use SSH port forwarding, for example `ssh -L 7420:127.0.0.1:7420 <host>`.
 
 ### Composite Views
 
