@@ -111,7 +111,7 @@ func TestProgressAndDashboardJSON(t *testing.T) {
 		now := time.Now().UTC()
 		writeJournalForTest(t, "demo", []engine.CommitJournalEntry{
 			{SHA: "x1", Ticket: "p-open", Repo: dir, TS: now.Add(-2 * time.Hour).Format(time.RFC3339), Msg: "[p-open] work", Author: "tkt", Action: "ref"},
-			{SHA: "x2", Ticket: "p-open", Repo: dir, TS: now.Add(-time.Hour).Format(time.RFC3339), Msg: "fixes [p-open] done", Author: "tkt", Action: "close"},
+			{SHA: "x2", Ticket: "p-open", Repo: dir, TS: now.Format(time.RFC3339), Msg: "fixes [p-open] done", Author: "tkt", Action: "close"},
 			{SHA: "x3", Ticket: "p-ip", Repo: dir, TS: now.Add(-10 * 24 * time.Hour).Format(time.RFC3339), Msg: "[p-ip] old", Author: "tkt", Action: "ref"},
 		})
 
