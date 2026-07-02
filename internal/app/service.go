@@ -83,6 +83,7 @@ type TicketSummary struct {
 	Tags     []string `json:"tags"`
 	Deps     []string `json:"deps"`
 	Created  string   `json:"created"`
+	ClosedAt string   `json:"closed_at"`
 	Modified string   `json:"modified"`
 	Revision Revision `json:"revision"`
 }
@@ -106,6 +107,7 @@ type TicketDetail struct {
 	Parent             string                      `json:"parent"`
 	Tags               []string                    `json:"tags"`
 	Created            string                      `json:"created"`
+	ClosedAt           string                      `json:"closed_at"`
 	ExternalRef        string                      `json:"external_ref"`
 	Description        string                      `json:"description"`
 	Design             string                      `json:"design"`
@@ -461,7 +463,7 @@ func (s *Service) UpdateTicket(projectName, id string, input UpdateTicketInput) 
 		changed = append(changed, "title")
 	}
 	if input.Status != nil {
-		record.Front.Status = *input.Status
+		engine.ApplyStatusTransition(&record, *input.Status, s.now())
 		changed = append(changed, "status")
 	}
 	if input.Type != nil {
@@ -887,6 +889,7 @@ func (s *Service) detailFromRecords(projectName string, record ticket.Record, re
 		Parent:             record.Front.Parent,
 		Tags:               tags,
 		Created:            record.Front.Created,
+		ClosedAt:           record.Front.ClosedAt,
 		ExternalRef:        record.Front.ExternalRef,
 		Description:        record.Body.Description,
 		Design:             record.Body.Design,
@@ -967,6 +970,7 @@ func SummaryFromRecord(record ticket.Record) (TicketSummary, error) {
 		Tags:     tags,
 		Deps:     deps,
 		Created:  record.Front.Created,
+		ClosedAt: record.Front.ClosedAt,
 		Modified: modified,
 		Revision: revision,
 	}, nil

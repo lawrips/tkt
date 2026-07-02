@@ -47,24 +47,28 @@ func ComputeStats(records []ticket.Record) StatsCounts {
 
 // TimelineWeek is one weekly bucket of closed tickets.
 type TimelineWeek struct {
-	WeekStart   string `json:"week_start"`
-	ClosedCount int    `json:"closed_count"`
+	WeekStart   string   `json:"week_start"`
+	ClosedCount int      `json:"closed_count"`
+	TicketIDs   []string `json:"ticket_ids"`
 }
 
-// ClosedByWeek buckets closed tickets by the Monday of their created week and
-// returns the trailing N weeks ending at the week containing now, oldest
-// first. Buckets outside the window are dropped.
-func ClosedByWeek(records []ticket.Record, weeks int, now time.Time) []TimelineWeek {
-	closedByWeek := map[string]int{}
+// ClosedByWeek buckets closed tickets by close time and returns the trailing N
+// weeks ending at the week containing now, oldest first. Close time uses
+// frontmatter closed_at, then commit journal close entries, then file modtime,
+// then created as a historical fallback.
+func ClosedByWeek(records []ticket.Record, journalEntries []CommitJournalEntry, weeks int, now time.Time) []TimelineWeek {
+	closedByWeek := map[string][]string{}
+	closeTimes := journalCloseTimes(journalEntries)
 	for _, record := range records {
 		if record.Front.Status != "closed" {
 			continue
 		}
-		created, err := time.Parse(time.RFC3339, record.Front.Created)
-		if err != nil {
+		closedAt, ok := closeTimeForRecord(record, closeTimes)
+		if !ok {
 			continue
 		}
-		closedByWeek[Monday(created).Format("2006-01-02")]++
+		key := Monday(closedAt).Format("2006-01-02")
+		closedByWeek[key] = append(closedByWeek[key], record.ID)
 	}
 
 	currentWeek := Monday(now.UTC())
@@ -72,9 +76,51 @@ func ClosedByWeek(records []ticket.Record, weeks int, now time.Time) []TimelineW
 	for i := weeks - 1; i >= 0; i-- {
 		start := currentWeek.AddDate(0, 0, -7*i)
 		key := start.Format("2006-01-02")
-		rows = append(rows, TimelineWeek{WeekStart: key, ClosedCount: closedByWeek[key]})
+		ids := closedByWeek[key]
+		if ids == nil {
+			ids = []string{}
+		}
+		sort.Strings(ids)
+		rows = append(rows, TimelineWeek{WeekStart: key, ClosedCount: len(ids), TicketIDs: ids})
 	}
 	return rows
+}
+
+func journalCloseTimes(entries []CommitJournalEntry) map[string]time.Time {
+	out := map[string]time.Time{}
+	for _, entry := range entries {
+		if entry.Action != "close" {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339, entry.TS)
+		if err != nil {
+			continue
+		}
+		if existing, ok := out[entry.Ticket]; !ok || t.After(existing) {
+			out[entry.Ticket] = t
+		}
+	}
+	return out
+}
+
+func closeTimeForRecord(record ticket.Record, journalCloseTimes map[string]time.Time) (time.Time, bool) {
+	if record.Front.ClosedAt != "" {
+		if t, err := time.Parse(time.RFC3339, record.Front.ClosedAt); err == nil {
+			return t.UTC(), true
+		}
+	}
+	if t, ok := journalCloseTimes[record.ID]; ok {
+		return t.UTC(), true
+	}
+	if !record.ModTime.IsZero() {
+		return record.ModTime.UTC(), true
+	}
+	if record.Front.Created != "" {
+		if t, err := time.Parse(time.RFC3339, record.Front.Created); err == nil {
+			return t.UTC(), true
+		}
+	}
+	return time.Time{}, false
 }
 
 // EpicProgress summarizes completion for one epic and its direct children.

@@ -2,10 +2,12 @@ package app
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/lawrips/tkt/internal/engine"
 	"github.com/lawrips/tkt/internal/ticket"
 )
 
@@ -17,6 +19,7 @@ type insightsFixture struct {
 	parent   string
 	deps     []string
 	created  string
+	closedAt string
 }
 
 func writeInsightsTicket(t *testing.T, dir string, fx insightsFixture) {
@@ -38,6 +41,7 @@ func writeInsightsTicket(t *testing.T, dir string, fx insightsFixture) {
 			Deps:     deps,
 			Links:    []string{},
 			Created:  created,
+			ClosedAt: fx.closedAt,
 			Type:     fx.typ,
 			Priority: fx.priority,
 			Parent:   fx.parent,
@@ -56,16 +60,38 @@ func setupInsightsProject(t *testing.T, now time.Time) *Service {
 
 	thisWeek := now.Format(time.RFC3339)
 	twoWeeksAgo := now.AddDate(0, 0, -14).Format(time.RFC3339)
+	twoMonthsAgo := now.AddDate(0, -2, 0).Format(time.RFC3339)
 
 	writeInsightsTicket(t, ticketDir, insightsFixture{id: "epic-1", status: "open", typ: "epic", priority: 1})
-	writeInsightsTicket(t, ticketDir, insightsFixture{id: "child-closed", status: "closed", typ: "task", priority: 2, parent: "epic-1", created: thisWeek})
+	writeInsightsTicket(t, ticketDir, insightsFixture{id: "child-closed", status: "closed", typ: "task", priority: 2, parent: "epic-1", created: twoMonthsAgo})
 	writeInsightsTicket(t, ticketDir, insightsFixture{id: "child-ready", status: "open", typ: "task", priority: 2, parent: "epic-1", deps: []string{"child-closed"}})
 	writeInsightsTicket(t, ticketDir, insightsFixture{id: "child-blocked", status: "open", typ: "task", priority: 2, parent: "epic-1", deps: []string{"task-free"}})
 	writeInsightsTicket(t, ticketDir, insightsFixture{id: "task-free", status: "open", typ: "task", priority: 2})
 	writeInsightsTicket(t, ticketDir, insightsFixture{id: "bug-active", status: "in_progress", typ: "bug", priority: 0})
-	writeInsightsTicket(t, ticketDir, insightsFixture{id: "chore-done", status: "closed", typ: "chore", priority: 4, created: twoWeeksAgo})
+	writeInsightsTicket(t, ticketDir, insightsFixture{id: "chore-done", status: "closed", typ: "chore", priority: 4, created: twoMonthsAgo, closedAt: twoWeeksAgo})
+	writeInsightsJournal(t, []engine.CommitJournalEntry{
+		{Ticket: "child-closed", TS: thisWeek, Action: "close"},
+	})
 
 	return New(Options{CWD: repo, Now: func() time.Time { return now }})
+}
+
+func writeInsightsJournal(t *testing.T, entries []engine.CommitJournalEntry) {
+	t.Helper()
+	path, err := engine.JournalPath("demo")
+	if err != nil {
+		t.Fatalf("journal path: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("mkdir journal: %v", err)
+	}
+	raw := make([]byte, 0)
+	for _, entry := range entries {
+		raw = append(raw, []byte(`{"ticket":"`+entry.Ticket+`","ts":"`+entry.TS+`","action":"`+entry.Action+`"}`+"\n")...)
+	}
+	if err := os.WriteFile(path, raw, 0644); err != nil {
+		t.Fatalf("write journal: %v", err)
+	}
 }
 
 func TestStatsCountsStatusesTypesAndQueues(t *testing.T) {
@@ -111,9 +137,9 @@ func TestTimelineBucketsClosedTicketsByWeek(t *testing.T) {
 	}
 	expected := map[string]int{
 		"2025-12-29": 0,
-		"2026-01-05": 1, // chore-done created two weeks before now
+		"2026-01-05": 1, // chore-done closed_at two weeks before now
 		"2026-01-12": 0,
-		"2026-01-19": 1, // child-closed created this week
+		"2026-01-19": 1, // child-closed has a close journal entry this week
 	}
 	for i, week := range report.Weeks {
 		want, ok := expected[week.WeekStart]
@@ -122,6 +148,9 @@ func TestTimelineBucketsClosedTicketsByWeek(t *testing.T) {
 		}
 		if week.ClosedCount != want {
 			t.Fatalf("week %s: expected %d closed, got %d", week.WeekStart, want, week.ClosedCount)
+		}
+		if week.WeekStart == "2026-01-19" && (len(week.TicketIDs) != 1 || week.TicketIDs[0] != "child-closed") {
+			t.Fatalf("expected child-closed ticket id in current week, got %#v", week.TicketIDs)
 		}
 	}
 }

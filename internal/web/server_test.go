@@ -344,6 +344,7 @@ func TestEmbeddedAppIncludesBoardView(t *testing.T) {
 		"dragover",
 		"moveTicketStatus",
 		"stale_revision",
+		"state.filters.status && !boardModeActive()",
 		"board-detail-backdrop",
 		"board-detail-open",
 		"view-board",
@@ -379,6 +380,7 @@ func TestEmbeddedAppIncludesDashboardView(t *testing.T) {
 		"/insights/stats",
 		"/insights/timeline",
 		"/insights/epics",
+		"ticket_ids",
 		"ready=true",
 		"blocked=true",
 		"loadDashboard",
@@ -523,8 +525,9 @@ func TestInsightsEndpointsReturnReports(t *testing.T) {
 	}
 	var timeline struct {
 		Weeks []struct {
-			WeekStart   string `json:"week_start"`
-			ClosedCount int    `json:"closed_count"`
+			WeekStart   string   `json:"week_start"`
+			ClosedCount int      `json:"closed_count"`
+			TicketIDs   []string `json:"ticket_ids"`
 		} `json:"weeks"`
 	}
 	if err := json.Unmarshal(timelineRec.Body.Bytes(), &timeline); err != nil {
@@ -536,6 +539,9 @@ func TestInsightsEndpointsReturnReports(t *testing.T) {
 	closedTotal := 0
 	for _, week := range timeline.Weeks {
 		closedTotal += week.ClosedCount
+		if week.ClosedCount == 1 && (len(week.TicketIDs) != 1 || week.TicketIDs[0] != "child-done") {
+			t.Fatalf("expected child-done ticket id in closed week, got %#v", week.TicketIDs)
+		}
 	}
 	if closedTotal != 1 {
 		t.Fatalf("expected 1 closed ticket in window, got %d", closedTotal)

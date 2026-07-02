@@ -507,13 +507,16 @@ func runTimeline(ctx context, args []string) error {
 		return err
 	}
 
-	buckets := engine.ClosedByWeek(records, weeks, time.Now().UTC())
+	projectName, _ := resolvedProjectName(ctx)
+	journalEntries, _ := engine.ReadJournalEntries(projectName)
+	buckets := engine.ClosedByWeek(records, journalEntries, weeks, time.Now().UTC())
 	if ctx.json {
 		rows := make([]map[string]any, 0, len(buckets))
 		for _, bucket := range buckets {
 			rows = append(rows, map[string]any{
 				"week_start":   bucket.WeekStart,
 				"closed_count": bucket.ClosedCount,
+				"ticket_ids":   bucket.TicketIDs,
 			})
 		}
 		return emitJSON(ctx, map[string]any{"weeks": rows})

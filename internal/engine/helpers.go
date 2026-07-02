@@ -29,6 +29,25 @@ func HasOpenDeps(record ticket.Record, byID map[string]ticket.Record) bool {
 	return false
 }
 
+// ApplyStatusTransition updates a record status and maintains closed_at for
+// transitions into and out of the closed state.
+func ApplyStatusTransition(record *ticket.Record, status string, at time.Time) {
+	wasClosed := record.Front.Status == "closed"
+	record.Front.Status = status
+	if status == "closed" {
+		if !wasClosed || record.Front.ClosedAt == "" {
+			if at.IsZero() {
+				at = time.Now().UTC()
+			}
+			record.Front.ClosedAt = at.UTC().Format(time.RFC3339)
+		}
+		return
+	}
+	if wasClosed {
+		record.Front.ClosedAt = ""
+	}
+}
+
 // AppendUnique appends value to the slice if not already present.
 func AppendUnique(values []string, value string) []string {
 	for _, existing := range values {
@@ -134,6 +153,7 @@ func TicketToMap(record ticket.Record) map[string]any {
 		"links":               links,
 		"tags":                tags,
 		"created":             record.Front.Created,
+		"closed_at":           record.Front.ClosedAt,
 		"external_ref":        record.Front.ExternalRef,
 		"description":         record.Body.Description,
 		"design":              record.Body.Design,

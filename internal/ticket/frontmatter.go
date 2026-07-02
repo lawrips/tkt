@@ -151,6 +151,8 @@ func assignFrontmatterField(fm *Frontmatter, key, value, blockRaw string, isBloc
 		fm.Links = list
 	case "created":
 		fm.Created = unquote(value)
+	case "closed_at":
+		fm.ClosedAt = unquote(value)
 	case "type":
 		fm.Type = unquote(value)
 	case "priority":
@@ -201,6 +203,9 @@ func marshalFrontmatter(fm Frontmatter) (string, error) {
 	}
 	if fm.Created != "" {
 		lines = append(lines, "created: "+fm.Created)
+	}
+	if fm.ClosedAt != "" {
+		lines = append(lines, "closed_at: "+fm.ClosedAt)
 	}
 	if fm.Type != "" {
 		lines = append(lines, "type: "+fm.Type)

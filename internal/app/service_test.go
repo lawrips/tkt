@@ -132,6 +132,39 @@ func TestUpdateTicketWritesMutationLog(t *testing.T) {
 	}
 }
 
+func TestUpdateTicketMaintainsClosedAt(t *testing.T) {
+	closedTime := time.Date(2026, 7, 2, 3, 0, 0, 0, time.UTC)
+	_, repo, ticketDir := setupProject(t)
+	writeTicket(t, ticketDir, "c-one", "Original")
+
+	svc := New(Options{CWD: repo, Now: func() time.Time { return closedTime }})
+	closedStatus := "closed"
+	detail, err := svc.UpdateTicket("demo", "c-one", UpdateTicketInput{Status: &closedStatus})
+	if err != nil {
+		t.Fatalf("close ticket: %v", err)
+	}
+	if detail.ClosedAt != "2026-07-02T03:00:00Z" {
+		t.Fatalf("expected closed_at set from service clock, got %q", detail.ClosedAt)
+	}
+
+	record, err := ticket.LoadByID(ticketDir, "c-one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Front.ClosedAt != "2026-07-02T03:00:00Z" {
+		t.Fatalf("expected persisted closed_at, got %q", record.Front.ClosedAt)
+	}
+
+	openStatus := "open"
+	detail, err = svc.UpdateTicket("demo", "c-one", UpdateTicketInput{Status: &openStatus})
+	if err != nil {
+		t.Fatalf("reopen ticket: %v", err)
+	}
+	if detail.ClosedAt != "" {
+		t.Fatalf("expected closed_at cleared on reopen, got %q", detail.ClosedAt)
+	}
+}
+
 func TestCreateTicketRejectsUnsafeFrontmatterFields(t *testing.T) {
 	_, repo, _ := setupProject(t)
 	svc := New(Options{CWD: repo})

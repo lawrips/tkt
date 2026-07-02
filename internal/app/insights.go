@@ -65,8 +65,12 @@ func (s *Service) Timeline(projectName string, weeks int) (TimelineReport, error
 	if err != nil {
 		return TimelineReport{}, err
 	}
+	journalEntries, err := engine.ReadJournalEntries(projectName)
+	if err != nil {
+		return TimelineReport{}, err
+	}
 	return TimelineReport{
-		Weeks:       engine.ClosedByWeek(records, weeks, s.now()),
+		Weeks:       engine.ClosedByWeek(records, journalEntries, weeks, s.now()),
 		Diagnostics: diagnostics,
 	}, nil
 }

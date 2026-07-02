@@ -1015,14 +1015,6 @@
     return date.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
   }
 
-  function mondayKey(value) {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return "";
-    const day = date.getUTCDay() === 0 ? 7 : date.getUTCDay();
-    const monday = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() - (day - 1)));
-    return monday.toISOString().slice(0, 10);
-  }
-
   function timelineSection(weeks) {
     const pills = TIMELINE_WEEK_OPTIONS.map(option => `
       <button type="button" class="sort-pill${option === state.timelineWeeks ? " active" : ""}" data-weeks="${option}">${option}w</button>
@@ -1055,9 +1047,12 @@
 
   function weekTicketList(weekKey) {
     const byID = state.dashboard ? state.dashboard.byID : {};
-    const closed = Object.values(byID)
-      .filter(item => item.status === "closed" && mondayKey(item.created) === weekKey)
-      .sort((a, b) => (a.created < b.created ? 1 : -1));
+    const week = state.dashboard && state.dashboard.timeline
+      ? state.dashboard.timeline.find(item => item.week_start === weekKey)
+      : null;
+    const closed = ((week && week.ticket_ids) || [])
+      .map(id => byID[id] || { id })
+      .sort((a, b) => (a.id > b.id ? 1 : -1));
     if (!closed.length) {
       return '<p class="muted timeline-week-empty">No closed tickets recorded for this week.</p>';
     }
@@ -1172,7 +1167,7 @@
     if (state.filters.search) params.set("search", state.filters.search);
     if (state.filters.sort) params.set("sort", formatSort(state.filters.sort));
     if (state.filters.parent) params.set("parent", state.filters.parent);
-    if (state.filters.status) params.set("status", state.filters.status);
+    if (state.filters.status && !boardModeActive()) params.set("status", state.filters.status);
     if (state.filters.type) params.set("type", state.filters.type);
     try {
       const list = await api(`/api/projects/${encodeURIComponent(state.selectedProject)}/tickets?${params}`);
