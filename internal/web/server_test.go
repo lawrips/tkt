@@ -435,6 +435,181 @@ func TestHealthEndpointRejectsMutation(t *testing.T) {
 	}
 }
 
+func TestInsightsEndpointsReturnReports(t *testing.T) {
+	_, repo, ticketDir := setupWebProject(t)
+	writeWebTicketRecord(t, ticketDir, "epic-1", "epic", "open", "", nil)
+	writeWebTicketRecord(t, ticketDir, "child-done", "task", "closed", "epic-1", nil)
+	writeWebTicketRecord(t, ticketDir, "child-open", "task", "open", "epic-1", []string{"child-done"})
+	writeWebTicketRecord(t, ticketDir, "task-blocked", "task", "open", "", []string{"child-open"})
+	server, err := New(Options{Token: "secret", CWD: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	get := func(path string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Authorization", "Bearer secret")
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		return rec
+	}
+
+	statsRec := get("/api/projects/demo/insights/stats")
+	if statsRec.Code != http.StatusOK {
+		t.Fatalf("stats: expected ok, got %d: %s", statsRec.Code, statsRec.Body.String())
+	}
+	var stats struct {
+		Total    int            `json:"total"`
+		ByStatus map[string]int `json:"by_status"`
+		Ready    int            `json:"ready"`
+		Blocked  int            `json:"blocked"`
+	}
+	if err := json.Unmarshal(statsRec.Body.Bytes(), &stats); err != nil {
+		t.Fatal(err)
+	}
+	if stats.Total != 4 || stats.ByStatus["open"] != 3 || stats.ByStatus["closed"] != 1 {
+		t.Fatalf("unexpected stats: %#v", stats)
+	}
+	if stats.Ready != 2 || stats.Blocked != 1 {
+		t.Fatalf("expected 2 ready / 1 blocked, got %d / %d", stats.Ready, stats.Blocked)
+	}
+
+	timelineRec := get("/api/projects/demo/insights/timeline?weeks=6")
+	if timelineRec.Code != http.StatusOK {
+		t.Fatalf("timeline: expected ok, got %d: %s", timelineRec.Code, timelineRec.Body.String())
+	}
+	var timeline struct {
+		Weeks []struct {
+			WeekStart   string `json:"week_start"`
+			ClosedCount int    `json:"closed_count"`
+		} `json:"weeks"`
+	}
+	if err := json.Unmarshal(timelineRec.Body.Bytes(), &timeline); err != nil {
+		t.Fatal(err)
+	}
+	if len(timeline.Weeks) != 6 {
+		t.Fatalf("expected 6 weeks, got %d", len(timeline.Weeks))
+	}
+	closedTotal := 0
+	for _, week := range timeline.Weeks {
+		closedTotal += week.ClosedCount
+	}
+	if closedTotal != 1 {
+		t.Fatalf("expected 1 closed ticket in window, got %d", closedTotal)
+	}
+
+	epicsRec := get("/api/projects/demo/insights/epics")
+	if epicsRec.Code != http.StatusOK {
+		t.Fatalf("epics: expected ok, got %d: %s", epicsRec.Code, epicsRec.Body.String())
+	}
+	var epics struct {
+		Epics []struct {
+			ID             string `json:"id"`
+			TotalChildren  int    `json:"total_children"`
+			ClosedChildren int    `json:"closed_children"`
+		} `json:"epics"`
+	}
+	if err := json.Unmarshal(epicsRec.Body.Bytes(), &epics); err != nil {
+		t.Fatal(err)
+	}
+	if len(epics.Epics) != 1 || epics.Epics[0].ID != "epic-1" {
+		t.Fatalf("unexpected epics payload: %#v", epics)
+	}
+	if epics.Epics[0].TotalChildren != 2 || epics.Epics[0].ClosedChildren != 1 {
+		t.Fatalf("expected 2 children / 1 closed, got %#v", epics.Epics[0])
+	}
+}
+
+func TestInsightsEndpointErrors(t *testing.T) {
+	_, repo, _ := setupWebProject(t)
+	server, err := New(Options{Token: "secret", CWD: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Missing token.
+	req := httptest.NewRequest(http.MethodGet, "/api/projects/demo/insights/stats", nil)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected unauthorized, got %d", rec.Code)
+	}
+
+	authGet := func(path string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Authorization", "Bearer secret")
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		return rec
+	}
+
+	if rec := authGet("/api/projects/missing/insights/stats"); rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown project: expected not found, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := authGet("/api/projects/demo/insights/unknown"); rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown report: expected not found, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := authGet("/api/projects/demo/insights/timeline?weeks=abc"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid weeks: expected bad request, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := authGet("/api/projects/demo/insights/timeline?weeks=0"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("zero weeks: expected bad request, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := authGet("/api/projects/demo/insights/timeline?weeks=999"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("oversized weeks: expected bad request, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	postReq := httptest.NewRequest(http.MethodPost, "/api/projects/demo/insights/stats", bytes.NewReader([]byte(`{}`)))
+	postReq.Header.Set("Authorization", "Bearer secret")
+	postRec := httptest.NewRecorder()
+	server.ServeHTTP(postRec, postReq)
+	if postRec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected method not allowed, got %d: %s", postRec.Code, postRec.Body.String())
+	}
+}
+
+func TestTicketListReadyAndBlockedFilters(t *testing.T) {
+	_, repo, ticketDir := setupWebProject(t)
+	writeWebTicketRecord(t, ticketDir, "t-ready", "task", "open", "", nil)
+	writeWebTicketRecord(t, ticketDir, "t-blocked", "task", "open", "", []string{"t-ready"})
+	server, err := New(Options{Token: "secret", CWD: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fetchIDs := func(path string) []string {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Authorization", "Bearer secret")
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: expected ok, got %d: %s", path, rec.Code, rec.Body.String())
+		}
+		var payload struct {
+			Items []struct {
+				ID string `json:"id"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		ids := make([]string, 0, len(payload.Items))
+		for _, item := range payload.Items {
+			ids = append(ids, item.ID)
+		}
+		return ids
+	}
+
+	ready := fetchIDs("/api/projects/demo/tickets?ready=true")
+	if len(ready) != 1 || ready[0] != "t-ready" {
+		t.Fatalf("expected ready=[t-ready], got %v", ready)
+	}
+	blocked := fetchIDs("/api/projects/demo/tickets?blocked=true")
+	if len(blocked) != 1 || blocked[0] != "t-blocked" {
+		t.Fatalf("expected blocked=[t-blocked], got %v", blocked)
+	}
+}
+
 func TestCreateTicketViaAPI(t *testing.T) {
 	home, repo, ticketDir := setupWebProject(t)
 	server, err := New(Options{Token: "secret", CWD: repo})
@@ -759,6 +934,32 @@ func setupWebProject(t *testing.T) (home, repo, ticketDir string) {
 		t.Fatalf("save config: %v", err)
 	}
 	return home, repo, ticketDir
+}
+
+func writeWebTicketRecord(t *testing.T, dir, id, typ, status, parent string, deps []string) {
+	t.Helper()
+	if deps == nil {
+		deps = []string{}
+	}
+	record := ticket.Record{
+		ID:   id,
+		Path: filepath.Join(dir, id+".md"),
+		Front: ticket.Frontmatter{
+			ID:       id,
+			Status:   status,
+			Deps:     deps,
+			Links:    []string{},
+			Created:  time.Now().UTC().Format(time.RFC3339),
+			Type:     typ,
+			Priority: 2,
+			Parent:   parent,
+			Extra:    map[string]ticket.ExtraField{},
+		},
+		Body: ticket.Body{Title: "Ticket " + id},
+	}
+	if err := ticket.SaveRecord(record); err != nil {
+		t.Fatalf("save ticket %s: %v", id, err)
+	}
 }
 
 func writeWebTicket(t *testing.T, dir, id, title string) {
