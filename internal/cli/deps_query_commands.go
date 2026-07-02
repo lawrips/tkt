@@ -460,39 +460,31 @@ func runStats(ctx context, args []string) error {
 		return err
 	}
 
-	statuses := []string{"open", "in_progress", "needs_testing", "closed"}
-	types := []string{"bug", "feature", "task", "epic", "chore"}
-	byStatus := map[string]int{}
-	byType := map[string]int{}
-	byPriority := map[int]int{}
-
-	for _, record := range records {
-		byStatus[record.Front.Status]++
-		byType[record.Front.Type]++
-		byPriority[record.Front.Priority]++
-	}
+	stats := engine.ComputeStats(records)
 
 	if ctx.json {
 		return emitJSON(ctx, map[string]any{
-			"counts":      byStatus,
-			"by_type":     byType,
-			"by_priority": byPriority,
-			"total":       len(records),
+			"counts":      stats.ByStatus,
+			"by_type":     stats.ByType,
+			"by_priority": stats.ByPriority,
+			"total":       stats.Total,
 		})
 	}
 
-	_, _ = fmt.Fprintf(ctx.stdout, "Total tickets: %d\n", len(records))
+	statuses := []string{"open", "in_progress", "needs_testing", "closed"}
+	types := []string{"bug", "feature", "task", "epic", "chore"}
+	_, _ = fmt.Fprintf(ctx.stdout, "Total tickets: %d\n", stats.Total)
 	_, _ = fmt.Fprintln(ctx.stdout, "By status:")
 	for _, status := range statuses {
-		_, _ = fmt.Fprintf(ctx.stdout, "  %s: %d\n", status, byStatus[status])
+		_, _ = fmt.Fprintf(ctx.stdout, "  %s: %d\n", status, stats.ByStatus[status])
 	}
 	_, _ = fmt.Fprintln(ctx.stdout, "By type:")
 	for _, typ := range types {
-		_, _ = fmt.Fprintf(ctx.stdout, "  %s: %d\n", typ, byType[typ])
+		_, _ = fmt.Fprintf(ctx.stdout, "  %s: %d\n", typ, stats.ByType[typ])
 	}
 	_, _ = fmt.Fprintln(ctx.stdout, "By priority:")
 	for p := 0; p <= 4; p++ {
-		_, _ = fmt.Fprintf(ctx.stdout, "  p%d: %d\n", p, byPriority[p])
+		_, _ = fmt.Fprintf(ctx.stdout, "  p%d: %d\n", p, stats.ByPriority[p])
 	}
 	return nil
 }
@@ -515,36 +507,22 @@ func runTimeline(ctx context, args []string) error {
 		return err
 	}
 
-	closedByWeek := map[string]int{}
-	for _, record := range records {
-		if record.Front.Status != "closed" {
-			continue
-		}
-		created, err := time.Parse(time.RFC3339, record.Front.Created)
-		if err != nil {
-			continue
-		}
-		weekStart := engine.Monday(created).Format("2006-01-02")
-		closedByWeek[weekStart]++
-	}
-
-	currentWeek := engine.Monday(time.Now().UTC())
-	rows := make([]map[string]any, 0, weeks)
-	for i := weeks - 1; i >= 0; i-- {
-		start := currentWeek.AddDate(0, 0, -7*i)
-		key := start.Format("2006-01-02")
-		count := closedByWeek[key]
-		rows = append(rows, map[string]any{
-			"week_start":   key,
-			"closed_count": count,
-		})
-		if ctx.json {
-			continue
-		}
-		_, _ = fmt.Fprintf(ctx.stdout, "%s\t%d\n", key, closedByWeek[key])
-	}
+	projectName, _ := resolvedProjectName(ctx)
+	journalEntries, _ := engine.ReadJournalEntries(projectName)
+	buckets := engine.ClosedByWeek(records, journalEntries, weeks, time.Now().UTC())
 	if ctx.json {
+		rows := make([]map[string]any, 0, len(buckets))
+		for _, bucket := range buckets {
+			rows = append(rows, map[string]any{
+				"week_start":   bucket.WeekStart,
+				"closed_count": bucket.ClosedCount,
+				"ticket_ids":   bucket.TicketIDs,
+			})
+		}
 		return emitJSON(ctx, map[string]any{"weeks": rows})
+	}
+	for _, bucket := range buckets {
+		_, _ = fmt.Fprintf(ctx.stdout, "%s\t%d\n", bucket.WeekStart, bucket.ClosedCount)
 	}
 	return nil
 }

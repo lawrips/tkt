@@ -4,6 +4,13 @@
   const SIDEBAR_KEY = "tkt-web-sidebar-collapsed";
   const PANE_WIDTHS_KEY = "tkt-web-pane-widths";
   const PROJECT_KEY = "tkt-web-selected-project";
+  const VIEW_MODES_KEY = "tkt-web-view-modes";
+  const BOARD_COLUMNS = [
+    { status: "open", label: "Open" },
+    { status: "in_progress", label: "In progress" },
+    { status: "needs_testing", label: "Needs testing" },
+    { status: "closed", label: "Closed" }
+  ];
   const PANE_DEFAULTS = { sidebar: 260, list: 420 };
   const PANE_LIMITS = {
     sidebar: { min: 180, max: 420 },
@@ -30,10 +37,19 @@
     health: null,
     healthError: "",
     healthLoaded: false,
+    dashboard: null,
+    dashboardError: "",
+    dashboardProject: "",
+    timelineWeeks: 8,
+    expandedWeek: "",
+    ticketUniverse: [],
     editMessage: "",
     editing: false,
     activeView: "tickets",
     mobileView: "list",
+    viewMode: "list",
+    boardDetailOpen: false,
+    boardNotice: "",
     sidebarCollapsed: false,
     sidebarDrawerOpen: false,
     paneWidths: { sidebar: PANE_DEFAULTS.sidebar, list: PANE_DEFAULTS.list },
@@ -53,8 +69,13 @@
     openSidebar: document.getElementById("open-sidebar"),
     toggleSidebar: document.getElementById("toggle-sidebar"),
     navTickets: document.getElementById("nav-tickets"),
+    navDashboard: document.getElementById("nav-dashboard"),
     navHealth: document.getElementById("nav-health"),
     healthColumn: document.getElementById("health-column"),
+    dashboardColumn: document.getElementById("dashboard-column"),
+    dashboard: document.getElementById("dashboard-panel"),
+    dashboardHeading: document.getElementById("dashboard-heading"),
+    refreshDashboard: document.getElementById("refresh-dashboard"),
     ticketColumn: document.getElementById("ticket-column"),
     detailColumn: document.getElementById("detail-column"),
     resizeSidebar: document.getElementById("resize-sidebar"),
@@ -69,6 +90,9 @@
     refreshHealth: document.getElementById("refresh-health"),
     ticketHeading: document.getElementById("ticket-heading"),
     ticketCount: document.getElementById("ticket-count"),
+    viewModeList: document.getElementById("view-mode-list"),
+    viewModeBoard: document.getElementById("view-mode-board"),
+    boardBackdrop: document.getElementById("board-detail-backdrop"),
     filters: document.getElementById("filters"),
     search: document.getElementById("search"),
     statusFilter: document.getElementById("status"),
@@ -209,7 +233,7 @@
       els.resizeSidebar.hidden = state.sidebarCollapsed;
     }
 
-    if (state.activeView === "health") {
+    if (state.activeView === "health" || state.activeView === "dashboard" || boardModeActive()) {
       if (els.resizeList) els.resizeList.hidden = true;
       if (state.sidebarCollapsed) {
         els.workspace.style.gridTemplateColumns = "minmax(" + PANE_LIMITS.detail.min + "px, 1fr)";
@@ -351,19 +375,128 @@
     return ticket && ticket.type === "epic";
   }
 
-  function childCountsFor(tickets) {
+  function storedViewModes() {
+    try {
+      const raw = window.localStorage.getItem(VIEW_MODES_KEY);
+      const parsed = raw ? JSON.parse(raw) : {};
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch (_err) {
+      return {};
+    }
+  }
+
+  function viewModeFor(projectName) {
+    return storedViewModes()[projectName] === "board" ? "board" : "list";
+  }
+
+  function saveViewMode(projectName, mode) {
+    if (!projectName) return;
+    const modes = storedViewModes();
+    modes[projectName] = mode;
+    saveValue(VIEW_MODES_KEY, JSON.stringify(modes));
+  }
+
+  function boardModeActive() {
+    return state.activeView === "tickets" && state.viewMode === "board";
+  }
+
+  function setViewMode(mode) {
+    const next = mode === "board" ? "board" : "list";
+    if (next === state.viewMode) return;
+    state.viewMode = next;
+    state.boardDetailOpen = false;
+    state.boardNotice = "";
+    saveViewMode(state.selectedProject, state.viewMode);
+    syncViewToggle();
+    updateLayoutClasses();
+    renderTickets();
+  }
+
+  function syncViewToggle() {
+    if (els.viewModeList) {
+      els.viewModeList.setAttribute("aria-pressed", String(state.viewMode !== "board"));
+    }
+    if (els.viewModeBoard) {
+      els.viewModeBoard.setAttribute("aria-pressed", String(state.viewMode === "board"));
+    }
+  }
+
+  function closeBoardDetail() {
+    if (!state.boardDetailOpen) return;
+    state.boardDetailOpen = false;
+    updateLayoutClasses();
+  }
+
+  function epicProgressIndex(tickets) {
     const counts = {};
     for (const ticket of tickets) {
       if (!ticket.parent) continue;
-      counts[ticket.parent] = (counts[ticket.parent] || 0) + 1;
+      if (!counts[ticket.parent]) {
+        counts[ticket.parent] = {
+          totalChildren: 0,
+          closedChildren: 0,
+          childrenByStatus: {}
+        };
+      }
+      counts[ticket.parent].totalChildren++;
+      counts[ticket.parent].childrenByStatus[ticket.status] = (counts[ticket.parent].childrenByStatus[ticket.status] || 0) + 1;
+      if (ticket.status === "closed") {
+        counts[ticket.parent].closedChildren++;
+      }
     }
     return counts;
   }
 
+  function epicProgressFor(ticket, progressIndex) {
+    const progress = progressIndex[ticket.id] || {};
+    return {
+      id: ticket.id,
+      totalChildren: Number(progress.totalChildren || progress.total_children || 0),
+      closedChildren: Number(progress.closedChildren || progress.closed_children || 0),
+      childrenByStatus: progress.childrenByStatus || progress.children_by_status || {}
+    };
+  }
+
+  function epicProgressSummary(ticket, progressIndex, options) {
+    const config = options || {};
+    const progress = epicProgressFor(ticket, progressIndex);
+    const total = progress.totalChildren;
+    const closed = progress.closedChildren;
+    if (!total) {
+      return config.compact ? "" : '<p class="muted epic-no-children">No children yet.</p>';
+    }
+    const pct = Math.round((closed / total) * 100);
+    const statusCounts = progress.childrenByStatus || {};
+    const chips = config.compact ? "" : Object.keys(STATUS_LABELS)
+      .filter(status => statusCounts[status])
+      .map(status => badge(`${statusCounts[status]} ${STATUS_LABELS[status].toLowerCase()}`, "status-" + status))
+      .join("");
+    const action = config.action
+      ? `<button class="small-button epic-children-button" type="button" data-parent-filter="${escapeHTML(ticket.id)}">Children</button>`
+      : "";
+    return `
+      <div class="epic-progress-summary${config.compact ? " compact" : ""}">
+        <div class="epic-progress">
+          <span class="insight-bar-track"><span class="insight-bar-fill" data-bar-width="${pct}"></span></span>
+          <span class="epic-progress-count">${closed}/${total}</span>
+          ${action}
+        </div>
+        ${chips ? `<div class="badge-row epic-status-row">${chips}</div>` : ""}
+      </div>
+    `;
+  }
+
   function setActiveView(view) {
-    state.activeView = view === "health" ? "health" : "tickets";
+    if (view === "health" || view === "dashboard") {
+      state.activeView = view;
+    } else {
+      state.activeView = "tickets";
+    }
     if (els.navTickets) {
       els.navTickets.setAttribute("aria-current", state.activeView === "tickets" ? "page" : "false");
+    }
+    if (els.navDashboard) {
+      els.navDashboard.setAttribute("aria-current", state.activeView === "dashboard" ? "page" : "false");
     }
     if (els.navHealth) {
       els.navHealth.setAttribute("aria-current", state.activeView === "health" ? "page" : "false");
@@ -371,9 +504,15 @@
     if (els.healthColumn) {
       els.healthColumn.hidden = state.activeView !== "health";
     }
+    if (els.dashboardColumn) {
+      els.dashboardColumn.hidden = state.activeView !== "dashboard";
+    }
     updateLayoutClasses();
     if (state.activeView === "health" && !state.healthLoaded) {
       loadHealth();
+    }
+    if (state.activeView === "dashboard" && state.dashboardProject !== state.selectedProject) {
+      loadDashboard();
     }
   }
 
@@ -383,13 +522,35 @@
     loadTickets();
   }
 
+  function applyStatusFilter(status) {
+    if (!STATUS_LABELS[status]) return;
+    state.filters.search = "";
+    state.filters.parent = "";
+    state.filters.status = status;
+    state.filters.type = "";
+    state.boardDetailOpen = false;
+    state.boardNotice = "";
+    state.viewMode = "list";
+    syncViewToggle();
+    syncFilterControls();
+    setActiveView("tickets");
+    loadTickets();
+  }
+
   function updateLayoutClasses() {
     if (!els.workspace) return;
     els.workspace.classList.toggle("view-tickets", state.activeView === "tickets");
     els.workspace.classList.toggle("view-health", state.activeView === "health");
+    els.workspace.classList.toggle("view-dashboard", state.activeView === "dashboard");
     const showDetail = state.activeView === "tickets" && isMobile() && state.mobileView === "detail" && !!state.selectedTicket;
     els.workspace.classList.toggle("view-detail", showDetail);
     els.workspace.classList.toggle("view-list", state.activeView === "tickets" && !showDetail);
+    els.workspace.classList.toggle("view-board", boardModeActive());
+    const drawerOpen = boardModeActive() && state.boardDetailOpen && !isMobile();
+    els.workspace.classList.toggle("board-detail-open", drawerOpen);
+    if (els.boardBackdrop) {
+      els.boardBackdrop.hidden = !drawerOpen;
+    }
     updateBackToolbar();
     applyPaneSizes();
   }
@@ -591,10 +752,41 @@
     els.status.className = "status-pill" + (className ? " " + className : "");
   }
 
+  function clearStoredToken() {
+    state.token = "";
+    try {
+      window.sessionStorage.removeItem("tkt-web-token");
+    } catch (_err) {
+      // Ignore storage failures in restricted browser contexts.
+    }
+  }
+
+  function isUnauthorizedError(err) {
+    if (!err) return false;
+    if (err.code === "unauthorized") return true;
+    const message = String(err.message || "").toLowerCase();
+    return message.includes("token") || message.includes("unauthorized");
+  }
+
+  function showUnauthenticatedState() {
+    clearStoredToken();
+    setStatus("Not authenticated", "warn");
+    els.ticketHeading.textContent = "Tickets";
+    els.ticketCount.className = "ticket-result-count is-empty";
+    els.ticketCount.textContent = "—";
+    els.ticketCount.setAttribute("aria-label", "Authentication required");
+    const message = notice(
+      "Open the authenticated URL printed by <code>tkt web</code>. Run <code>tkt help web</code> for setup details.",
+      "warning"
+    );
+    els.setup.innerHTML = message;
+    els.tickets.innerHTML = message;
+    els.projects.innerHTML = "";
+  }
+
   async function loadSession() {
     if (!state.token) {
-      setStatus("Missing token", "warn");
-      els.setup.innerHTML = notice("Open TKT Web from the authenticated URL printed by `tkt web`.", "warning");
+      showUnauthenticatedState();
       return;
     }
     setStatus("Loading");
@@ -603,6 +795,9 @@
       state.overview = session.projects;
       state.projects = session.projects.projects || [];
       state.selectedProject = chooseInitialProject(state.projects, session.projects);
+      state.viewMode = viewModeFor(state.selectedProject);
+      syncViewToggle();
+      updateLayoutClasses();
       setStatus("Connected", "ok");
       renderProjects();
       renderSetup();
@@ -613,8 +808,13 @@
         renderTickets();
       }
     } catch (err) {
+      if (isUnauthorizedError(err)) {
+        showUnauthenticatedState();
+        return;
+      }
       setStatus("Cannot connect", "warn");
-      els.setup.innerHTML = notice(err.message, "error");
+      els.setup.innerHTML = notice(escapeHTML(err.message), "error");
+      els.tickets.innerHTML = notice(escapeHTML(err.message), "error");
     }
   }
 
@@ -712,6 +912,249 @@
     return "warn";
   }
 
+  /* ── Analytics ── */
+
+  const TIMELINE_WEEK_OPTIONS = [4, 8, 12, 26];
+  const STATUS_LABELS = {
+    open: "Open",
+    in_progress: "In progress",
+    needs_testing: "Needs testing",
+    closed: "Closed"
+  };
+
+  function dashboardScrollSnapshot(shouldPreserve) {
+    if (!shouldPreserve || !els.dashboard) return null;
+    const scrollParent = els.dashboard.closest(".panel-scroll");
+    return {
+      windowX: window.scrollX,
+      windowY: window.scrollY,
+      scrollParent,
+      scrollTop: scrollParent ? scrollParent.scrollTop : 0,
+      scrollLeft: scrollParent ? scrollParent.scrollLeft : 0
+    };
+  }
+
+  function restoreDashboardScroll(snapshot) {
+    if (!snapshot) return;
+    window.requestAnimationFrame(() => {
+      if (snapshot.scrollParent) {
+        snapshot.scrollParent.scrollTop = snapshot.scrollTop;
+        snapshot.scrollParent.scrollLeft = snapshot.scrollLeft;
+      }
+      window.scrollTo(snapshot.windowX, snapshot.windowY);
+    });
+  }
+
+  async function loadDashboard(options) {
+    const config = options || {};
+    if (!els.dashboard) return;
+    const scrollSnapshot = dashboardScrollSnapshot(config.preserveScroll);
+    state.dashboardError = "";
+    state.expandedWeek = "";
+    if (els.dashboardHeading) {
+      els.dashboardHeading.textContent = state.selectedProject || "Analytics";
+    }
+    if (!state.selectedProject) {
+      state.dashboard = null;
+      state.dashboardProject = "";
+      els.dashboard.innerHTML = "<p class=\"muted\">Choose a configured project to see its analytics.</p>";
+      return;
+    }
+    if (!config.preserveScroll || !state.dashboard) {
+      els.dashboard.innerHTML = "<p class=\"loading\">Loading analytics...</p>";
+    }
+    const project = state.selectedProject;
+    const base = `/api/projects/${encodeURIComponent(project)}`;
+    try {
+      const [stats, timeline, all] = await Promise.all([
+        api(`${base}/insights/stats`),
+        api(`${base}/insights/timeline?weeks=${state.timelineWeeks}`),
+        api(`${base}/tickets`)
+      ]);
+      if (state.selectedProject !== project) return;
+      const byID = {};
+      for (const item of all.items || []) {
+        byID[item.id] = item;
+      }
+      state.dashboard = {
+        stats,
+        timeline: timeline.weeks || [],
+        byID
+      };
+      state.dashboardProject = project;
+      renderDashboard();
+      restoreDashboardScroll(scrollSnapshot);
+    } catch (err) {
+      if (state.selectedProject !== project) return;
+      state.dashboard = null;
+      state.dashboardProject = "";
+      state.dashboardError = err.message || "Analytics unavailable.";
+      renderDashboard();
+      restoreDashboardScroll(scrollSnapshot);
+    }
+  }
+
+  function renderDashboard() {
+    if (!els.dashboard) return;
+    if (els.dashboardHeading) {
+      els.dashboardHeading.textContent = state.selectedProject || "Analytics";
+    }
+    if (state.dashboardError) {
+      els.dashboard.innerHTML = notice(escapeHTML(state.dashboardError), "error");
+      return;
+    }
+    const data = state.dashboard;
+    if (!data) {
+      els.dashboard.innerHTML = "";
+      return;
+    }
+    els.dashboard.innerHTML = `
+      ${overviewSection(data.stats)}
+      ${timelineSection(data.timeline)}
+    `;
+    applyBarWidths(els.dashboard);
+  }
+
+  function applyBarWidths(root) {
+    const scope = root || document;
+    scope.querySelectorAll("[data-bar-width]").forEach(el => {
+      el.style.width = el.dataset.barWidth + "%";
+    });
+  }
+
+  function barWidth(count, max) {
+    if (!max || !count) return 0;
+    return Math.max(2, Math.round((count / max) * 100));
+  }
+
+  function overviewSection(stats) {
+    const byStatus = stats.by_status || {};
+    const cards = [
+      { label: "Total", value: stats.total || 0 },
+      { label: "Open", value: byStatus.open || 0, status: "open" },
+      { label: "In progress", value: byStatus.in_progress || 0, status: "in_progress" },
+      { label: "Needs testing", value: byStatus.needs_testing || 0, status: "needs_testing" },
+      { label: "Closed", value: byStatus.closed || 0, status: "closed" },
+      { label: "Ready", value: stats.ready || 0, kind: "ready" },
+      { label: "Blocked", value: stats.blocked || 0, kind: "blocked" }
+    ];
+    const cardHTML = cards.map(card => {
+      const className = `stat-card${card.kind ? " stat-card-" + card.kind : ""}${card.status ? " stat-card-action" : ""}`;
+      const body = `
+        <span class="stat-value">${Number(card.value)}</span>
+        <span class="stat-label">${escapeHTML(card.label)}</span>
+      `;
+      if (!card.status) return `<div class="${className}">${body}</div>`;
+      return `
+        <button class="${className}" type="button" data-status-filter="${escapeHTML(card.status)}" aria-label="Show ${escapeHTML(card.label.toLowerCase())} tickets">
+          ${body}
+        </button>
+      `;
+    }).join("");
+    return `
+      <section class="insight-section">
+        <h3 class="section-label">Overview</h3>
+        <div class="stat-cards">${cardHTML}</div>
+        ${distributionBlock("By type", stats.by_type || {})}
+        ${distributionBlock("By priority", priorityEntries(stats.by_priority || {}))}
+      </section>
+    `;
+  }
+
+  function priorityEntries(byPriority) {
+    const entries = {};
+    for (let p = 0; p <= 4; p++) {
+      const count = Number(byPriority[p] || byPriority[String(p)] || 0);
+      if (count > 0) entries["p" + p] = count;
+    }
+    return entries;
+  }
+
+  function distributionBlock(title, counts) {
+    const entries = Object.keys(counts)
+      .map(key => ({ key, count: Number(counts[key] || 0) }))
+      .filter(entry => entry.count > 0)
+      .sort((a, b) => b.count - a.count || (a.key < b.key ? -1 : 1));
+    if (!entries.length) return "";
+    const max = entries[0].count;
+    const rows = entries.map(entry => `
+      <div class="insight-dist-row">
+        <span class="insight-dist-label">${escapeHTML(entry.key)}</span>
+        <div class="insight-bar-track"><div class="insight-bar-fill" data-bar-width="${barWidth(entry.count, max)}"></div></div>
+        <span class="insight-dist-count">${entry.count}</span>
+      </div>
+    `).join("");
+    return `
+      <div class="insight-distribution">
+        <h4 class="aside-label">${escapeHTML(title)}</h4>
+        ${rows}
+      </div>
+    `;
+  }
+
+  function formatWeekLabel(key) {
+    const date = new Date(key + "T00:00:00Z");
+    if (Number.isNaN(date.getTime())) return key;
+    return date.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+  }
+
+  function timelineSection(weeks) {
+    const pills = TIMELINE_WEEK_OPTIONS.map(option => `
+      <button type="button" class="sort-pill${option === state.timelineWeeks ? " active" : ""}" data-weeks="${option}">${option}w</button>
+    `).join("");
+    const max = weeks.reduce((acc, week) => Math.max(acc, week.closed_count || 0), 0);
+    const hasClosed = max > 0;
+    const rows = weeks.map(week => {
+      const key = week.week_start;
+      const expanded = state.expandedWeek === key;
+      return `
+        <button type="button" class="timeline-row${expanded ? " expanded" : ""}" data-week-toggle="${escapeHTML(key)}" aria-expanded="${expanded}">
+          <span class="timeline-week" title="Week of ${escapeHTML(key)}">${escapeHTML(formatWeekLabel(key))}</span>
+          <span class="insight-bar-track"><span class="insight-bar-fill" data-bar-width="${barWidth(week.closed_count || 0, max)}"></span></span>
+          <span class="timeline-count">${Number(week.closed_count || 0)}</span>
+        </button>
+        ${expanded ? weekTicketList(key) : ""}
+      `;
+    }).join("");
+    return `
+      <section class="insight-section">
+        <div class="insight-section-head">
+          <h3 class="section-label">Closed per week</h3>
+          <div class="weeks-toggle" role="group" aria-label="Timeline window">${pills}</div>
+        </div>
+        ${hasClosed ? "" : '<p class="muted">No tickets closed in this window.</p>'}
+        <div class="timeline-rows">${rows}</div>
+      </section>
+    `;
+  }
+
+  function weekTicketList(weekKey) {
+    const byID = state.dashboard ? state.dashboard.byID : {};
+    const week = state.dashboard && state.dashboard.timeline
+      ? state.dashboard.timeline.find(item => item.week_start === weekKey)
+      : null;
+    const closed = ((week && week.ticket_ids) || [])
+      .map(id => byID[id] || { id })
+      .sort((a, b) => (a.id > b.id ? 1 : -1));
+    if (!closed.length) {
+      return '<p class="muted timeline-week-empty">No closed tickets recorded for this week.</p>';
+    }
+    const items = closed.map(item => `
+      <button class="queue-item" type="button" data-nav-ticket="${escapeHTML(item.id)}">
+        <span class="ticket-row-top"><span class="row-title">${escapeHTML(item.title || "(untitled)")}</span></span>
+        <span class="row-meta">${escapeHTML(item.id)} · ${escapeHTML(item.type || "")}</span>
+      </button>
+    `).join("");
+    return `<div class="timeline-week-tickets">${items}</div>`;
+  }
+
+  async function openTicketFromDashboard(ticketID) {
+    if (!ticketID) return;
+    setActiveView("tickets");
+    state.editMessage = "";
+    await loadDetail(ticketID, { resetHistory: true });
+  }
+
   function renderSetup() {
     if (!state.overview) {
       els.setup.innerHTML = "";
@@ -746,21 +1189,32 @@
   }
 
   async function loadTickets() {
+    if (!state.token) {
+      showUnauthenticatedState();
+      return;
+    }
     if (!state.selectedProject) {
       renderTickets();
       updateLayoutClasses();
       return;
     }
+    state.boardNotice = "";
     els.tickets.innerHTML = "<p class=\"loading\">Loading tickets...</p>";
     const params = new URLSearchParams();
     if (state.filters.search) params.set("search", state.filters.search);
     if (state.filters.sort) params.set("sort", formatSort(state.filters.sort));
     if (state.filters.parent) params.set("parent", state.filters.parent);
-    if (state.filters.status) params.set("status", state.filters.status);
+    if (state.filters.status && !boardModeActive()) params.set("status", state.filters.status);
     if (state.filters.type) params.set("type", state.filters.type);
     try {
-      const list = await api(`/api/projects/${encodeURIComponent(state.selectedProject)}/tickets?${params}`);
+      const ticketPath = `/api/projects/${encodeURIComponent(state.selectedProject)}/tickets`;
+      const query = params.toString();
+      const [list, all] = await Promise.all([
+        api(query ? `${ticketPath}?${query}` : ticketPath),
+        api(ticketPath)
+      ]);
       state.tickets = list.items || [];
+      state.ticketUniverse = all.items || state.tickets;
       renderTickets();
       if (state.selectedTicket && state.tickets.some(t => t.id === state.selectedTicket)) {
         await loadDetail(state.selectedTicket, { preserveMobileView: true });
@@ -777,29 +1231,54 @@
     }
   }
 
-  function renderTickets() {
-    const projectLabel = state.selectedProject || "No project";
-    els.ticketHeading.textContent = projectLabel;
-    const countLabel = `${state.tickets.length} ticket${state.tickets.length === 1 ? "" : "s"}`;
-    if (state.filters.parent) {
-      els.ticketCount.innerHTML = `
-        ${escapeHTML(countLabel)}
-        <span class="filter-chip">children of ${escapeHTML(state.filters.parent)}
-          <button type="button" class="filter-chip-clear" data-clear-parent-filter title="Show all tickets" aria-label="Show all tickets">&times;</button>
-        </span>
-      `;
-    } else {
-      els.ticketCount.textContent = countLabel;
+  function renderTicketCount() {
+    if (!state.token) {
+      els.ticketCount.className = "ticket-result-count is-empty";
+      els.ticketCount.textContent = "—";
+      els.ticketCount.setAttribute("aria-label", "Authentication required");
+      els.ticketCount.style.removeProperty("--ticket-count-num-width");
+      return;
     }
     if (!state.selectedProject) {
+      els.ticketCount.className = "ticket-result-count is-empty";
+      els.ticketCount.textContent = "—";
+      els.ticketCount.setAttribute("aria-label", "No project selected");
+      els.ticketCount.style.removeProperty("--ticket-count-num-width");
+      return;
+    }
+    const shown = state.tickets.length;
+    const total = state.ticketUniverse.length || shown;
+    const digits = Math.max(String(total).length, 1);
+    els.ticketCount.className = "ticket-result-count";
+    els.ticketCount.style.setProperty("--ticket-count-num-width", `${digits}ch`);
+    els.ticketCount.setAttribute("aria-label", `${shown} of ${total} ticket${total === 1 ? "" : "s"}`);
+    els.ticketCount.innerHTML = `
+      <span class="ticket-result-shown">${shown}</span><span class="ticket-result-sep" aria-hidden="true"> / </span><span class="ticket-result-total">${total}</span>
+    `.trim();
+  }
+
+  function renderTickets() {
+    if (!state.token) {
+      showUnauthenticatedState();
+      return;
+    }
+    const projectLabel = state.selectedProject || "No project";
+    els.ticketHeading.textContent = projectLabel;
+    renderTicketCount();
+    if (!state.selectedProject) {
       els.tickets.innerHTML = "<p class=\"muted\">Choose a configured project or run `tkt init`.</p>";
+      return;
+    }
+    if (boardModeActive()) {
+      els.tickets.innerHTML = boardView();
+      applyBarWidths(els.tickets);
       return;
     }
     if (!state.tickets.length) {
       els.tickets.innerHTML = "<p class=\"muted\">No tickets match the current filters.</p>";
       return;
     }
-    const childCounts = childCountsFor(state.tickets);
+    const epicProgress = epicProgressIndex(state.ticketUniverse.length ? state.ticketUniverse : state.tickets);
     els.tickets.innerHTML = `
       <div class="ticket-inbox">
         <div class="ticket-sort-strip" aria-label="Ticket sorting">
@@ -813,7 +1292,8 @@
           ${state.tickets.map(ticket => {
             const selected = ticket.id === state.selectedTicket;
             const epic = isEpic(ticket);
-            const childCount = epic ? childCounts[ticket.id] || 0 : 0;
+            const progress = epic ? epicProgressFor(ticket, epicProgress) : null;
+            const childCount = progress ? progress.totalChildren : 0;
             const meta = [
               ticket.id,
               ticket.status,
@@ -828,6 +1308,7 @@
                     <span class="row-title">${escapeHTML(ticket.title || "(untitled)")}</span>
                   </div>
                   <div class="row-meta">${escapeHTML(meta)}</div>
+                  ${epic ? epicProgressSummary(ticket, epicProgress, { action: true }) : ""}
                 </div>
                 <div class="ticket-row-aside">
                   <span class="priority-token">p${Number(ticket.priority || 0)}</span>
@@ -839,6 +1320,96 @@
         </div>
       </div>
     `;
+    applyBarWidths(els.tickets);
+  }
+
+  function boardView() {
+    const epicProgress = epicProgressIndex(state.ticketUniverse.length ? state.ticketUniverse : state.tickets);
+    const columns = BOARD_COLUMNS.map(column => {
+      const tickets = state.tickets.filter(ticket => ticket.status === column.status);
+      return `
+        <section class="board-column" data-status="${column.status}">
+          <header class="board-column-header">
+            <h3>${escapeHTML(column.label)}</h3>
+            <span class="board-count">${tickets.length}</span>
+          </header>
+          <div class="board-column-body">
+            ${tickets.length ? tickets.map(ticket => boardCard(ticket, epicProgress)).join("") : '<p class="board-empty">No tickets</p>'}
+          </div>
+        </section>
+      `;
+    }).join("");
+    return `
+      <div class="ticket-board">
+        <div class="ticket-sort-strip" aria-label="Ticket sorting">
+          <span class="sort-label">Sort</span>
+          ${sortPill("modified", "Date")}
+          ${sortPill("priority", "Priority")}
+          ${sortPill("title", "Title")}
+          ${sortPill("type", "Type")}
+        </div>
+        ${state.boardNotice ? `<div class="board-notice notice warning">${escapeHTML(state.boardNotice)}</div>` : ""}
+        <div class="board-columns">${columns}</div>
+      </div>
+    `;
+  }
+
+  function boardCard(ticket, epicProgress) {
+    const selected = ticket.id === state.selectedTicket;
+    const epic = isEpic(ticket);
+    return `
+      <article class="board-card${selected ? " selected" : ""}${epic ? " type-epic" : ""}" draggable="true" data-ticket="${escapeHTML(ticket.id)}" tabindex="0" aria-current="${selected}">
+        <div class="board-card-title-row">
+          ${epic ? '<span class="type-mark type-mark-epic">Epic</span>' : ""}
+          <span class="row-title">${escapeHTML(ticket.title || "(untitled)")}</span>
+        </div>
+        <span class="board-card-id">${escapeHTML(ticket.id)}</span>
+        ${epic ? epicProgressSummary(ticket, epicProgress, { compact: true }) : ""}
+        <div class="board-card-foot">
+          <span class="priority-token">p${Number(ticket.priority || 0)}</span>
+          <span class="ticket-row-date">${escapeHTML(formatTicketDate(ticket.modified))}</span>
+        </div>
+      </article>
+    `;
+  }
+
+  async function moveTicketStatus(ticketID, status) {
+    const ticket = state.tickets.find(item => item.id === ticketID);
+    if (!ticket || !status || ticket.status === status) return;
+    try {
+      const detail = await mutate(
+        `/api/projects/${encodeURIComponent(state.selectedProject)}/tickets/${encodeURIComponent(ticketID)}`,
+        { source: "web", revision: ticket.revision, fields: { status } },
+        { method: "PATCH" }
+      );
+      state.boardNotice = "";
+      ticket.status = detail.status;
+      ticket.revision = detail.revision;
+      if (detail.revision && detail.revision.mod_time) {
+        ticket.modified = detail.revision.mod_time;
+      }
+      if (state.detail && state.detail.id === ticketID) {
+        state.detail = detail;
+        renderDetail();
+      }
+      const universeTicket = state.ticketUniverse.find(item => item.id === ticketID);
+      if (universeTicket) {
+        universeTicket.status = detail.status;
+        universeTicket.revision = detail.revision;
+        if (detail.revision && detail.revision.mod_time) {
+          universeTicket.modified = detail.revision.mod_time;
+        }
+      }
+      renderTickets();
+    } catch (err) {
+      if (err.code === "stale_revision") {
+        await loadTickets();
+        state.boardNotice = "This ticket changed on disk, so the move was not applied. The board has been refreshed; try again.";
+      } else {
+        state.boardNotice = err.message || "Could not update ticket status.";
+      }
+      renderTickets();
+    }
   }
 
   async function loadDetail(ticketID, options) {
@@ -852,6 +1423,9 @@
     state.editing = false;
     renderTickets();
     scrollTicketIntoView();
+    if (boardModeActive() && !isMobile() && !preserveMobileView) {
+      state.boardDetailOpen = true;
+    }
     if (!preserveMobileView && isMobile()) {
       setMobileView("detail");
     } else {
@@ -913,10 +1487,12 @@
           ${detail.assignee ? badge(detail.assignee) : ""}
           ${epic && detail.children && detail.children.length ? badge(detail.children.length + " children", "child-count") : ""}
         </div>
+        ${epic ? epicProgressSummary(detail, epicProgressIndex(detail.children || []), {}) : ""}
       </header>
       ${state.editMessage ? notice(escapeHTML(state.editMessage), state.editMessage.indexOf("saved") >= 0 ? "" : "warning") : ""}
       ${relationshipsView(detail)}
     `;
+    applyBarWidths(els.detail);
   }
 
   function relationshipsView(detail) {
@@ -1176,6 +1752,12 @@
         loadTickets();
         return;
       }
+      const childrenButton = event.target.closest("[data-parent-filter]");
+      if (childrenButton) {
+        event.preventDefault();
+        applyParentFilter(childrenButton.dataset.parentFilter);
+        return;
+      }
       const row = event.target.closest("[data-ticket]");
       if (!row) return;
       state.editMessage = "";
@@ -1184,6 +1766,7 @@
 
     els.ticketColumn.addEventListener("keydown", event => {
       if (event.key !== "Enter" && event.key !== " ") return;
+      if (event.target.closest("[data-parent-filter]")) return;
       const row = event.target.closest("[data-ticket]");
       if (!row) return;
       event.preventDefault();
@@ -1191,6 +1774,79 @@
       loadDetail(row.dataset.ticket, { resetHistory: true });
     });
   }
+
+  let draggedTicketID = "";
+
+  function clearDropTargets() {
+    els.tickets.querySelectorAll(".board-column.drag-over").forEach(column => {
+      column.classList.remove("drag-over");
+    });
+  }
+
+  els.tickets.addEventListener("dragstart", event => {
+    const card = event.target.closest(".board-card");
+    if (!card) return;
+    draggedTicketID = card.dataset.ticket || "";
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", draggedTicketID);
+    }
+    card.classList.add("dragging");
+  });
+
+  els.tickets.addEventListener("dragend", event => {
+    const card = event.target.closest(".board-card");
+    if (card) card.classList.remove("dragging");
+    draggedTicketID = "";
+    clearDropTargets();
+  });
+
+  els.tickets.addEventListener("dragover", event => {
+    if (!draggedTicketID) return;
+    const column = event.target.closest(".board-column");
+    if (!column) return;
+    event.preventDefault();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "move";
+    }
+    if (!column.classList.contains("drag-over")) {
+      clearDropTargets();
+      column.classList.add("drag-over");
+    }
+  });
+
+  els.tickets.addEventListener("dragleave", event => {
+    const column = event.target.closest(".board-column");
+    if (!column) return;
+    if (event.relatedTarget && column.contains(event.relatedTarget)) return;
+    column.classList.remove("drag-over");
+  });
+
+  els.tickets.addEventListener("drop", event => {
+    if (!draggedTicketID) return;
+    const column = event.target.closest(".board-column");
+    if (!column) return;
+    event.preventDefault();
+    const ticketID = draggedTicketID;
+    draggedTicketID = "";
+    clearDropTargets();
+    moveTicketStatus(ticketID, column.dataset.status || "");
+  });
+
+  if (els.viewModeList) {
+    els.viewModeList.addEventListener("click", () => setViewMode("list"));
+  }
+  if (els.viewModeBoard) {
+    els.viewModeBoard.addEventListener("click", () => setViewMode("board"));
+  }
+  if (els.boardBackdrop) {
+    els.boardBackdrop.addEventListener("click", () => closeBoardDetail());
+  }
+  document.addEventListener("keydown", event => {
+    if (event.key === "Escape" && state.boardDetailOpen) {
+      closeBoardDetail();
+    }
+  });
 
   els.projects.addEventListener("click", event => {
     const button = event.target.closest("[data-project]");
@@ -1200,12 +1856,24 @@
     resetTicketHistory();
     state.selectedTicket = "";
     state.detail = null;
+    state.ticketUniverse = [];
     state.editing = false;
     state.editMessage = "";
+    state.viewMode = viewModeFor(state.selectedProject);
+    state.boardDetailOpen = false;
+    state.boardNotice = "";
+    state.dashboard = null;
+    state.dashboardProject = "";
+    state.dashboardError = "";
+    state.expandedWeek = "";
+    syncViewToggle();
     setMobileView("list");
     setSidebarCollapsed(true);
     renderProjects();
     loadTickets();
+    if (state.activeView === "dashboard") {
+      loadDashboard();
+    }
   });
 
   els.detail.addEventListener("submit", async event => {
@@ -1305,11 +1973,48 @@
       loadHealth();
     });
   }
+  if (els.refreshDashboard) {
+    els.refreshDashboard.addEventListener("click", () => loadDashboard());
+  }
   if (els.navTickets) {
     els.navTickets.addEventListener("click", () => setActiveView("tickets"));
   }
+  if (els.navDashboard) {
+    els.navDashboard.addEventListener("click", () => setActiveView("dashboard"));
+  }
   if (els.navHealth) {
     els.navHealth.addEventListener("click", () => setActiveView("health"));
+  }
+
+  if (els.dashboard) {
+    els.dashboard.addEventListener("click", event => {
+      const weeksButton = event.target.closest("[data-weeks]");
+      if (weeksButton) {
+        event.preventDefault();
+        const weeks = Number(weeksButton.dataset.weeks) || 8;
+        if (weeks === state.timelineWeeks) return;
+        state.timelineWeeks = weeks;
+        loadDashboard({ preserveScroll: true });
+        return;
+      }
+      const weekToggle = event.target.closest("[data-week-toggle]");
+      if (weekToggle) {
+        const key = weekToggle.dataset.weekToggle;
+        state.expandedWeek = state.expandedWeek === key ? "" : key;
+        renderDashboard();
+        return;
+      }
+      const statusButton = event.target.closest("[data-status-filter]");
+      if (statusButton) {
+        event.preventDefault();
+        applyStatusFilter(statusButton.dataset.statusFilter);
+        return;
+      }
+      const navButton = event.target.closest("[data-nav-ticket]");
+      if (navButton) {
+        openTicketFromDashboard(navButton.dataset.navTicket);
+      }
+    });
   }
 
   els.filters.addEventListener("input", () => {

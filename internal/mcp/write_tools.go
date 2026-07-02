@@ -120,7 +120,7 @@ func (s *Server) handleEdit(_ stdctx.Context, req mcplib.CallToolRequest) (*mcpl
 		changed = append(changed, "description")
 	}
 	if v := req.GetString("status", ""); v != "" {
-		record.Front.Status = v
+		engine.ApplyStatusTransition(&record, v, time.Now().UTC())
 		changed = append(changed, "status")
 	}
 	if v := req.GetString("type", ""); v != "" {

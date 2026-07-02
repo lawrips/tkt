@@ -208,6 +208,10 @@ func (s *Server) handleProjectRoute(w http.ResponseWriter, r *http.Request, svc 
 		writeError(w, http.StatusBadRequest, "validation_error", "Invalid project name.", nil)
 		return
 	}
+	if parts[1] == "insights" {
+		s.handleInsights(w, r, svc, projectName, parts)
+		return
+	}
 	if parts[1] != "tickets" {
 		writeError(w, http.StatusNotFound, "not_found", "API route not found.", nil)
 		return
@@ -258,6 +262,51 @@ func (s *Server) handleProjectRoute(w http.ResponseWriter, r *http.Request, svc 
 		s.handleDependencyRoute(w, r, svc, projectName, ticketID, parts)
 	case "links":
 		s.handleLinkRoute(w, r, svc, projectName, ticketID, parts)
+	default:
+		writeError(w, http.StatusNotFound, "not_found", "API route not found.", nil)
+	}
+}
+
+func (s *Server) handleInsights(w http.ResponseWriter, r *http.Request, svc *app.Service, projectName string, parts []string) {
+	if len(parts) != 3 {
+		writeError(w, http.StatusNotFound, "not_found", "API route not found.", nil)
+		return
+	}
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed.", nil)
+		return
+	}
+	switch parts[2] {
+	case "stats":
+		report, err := svc.Stats(projectName)
+		if err != nil {
+			writeAppError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, report)
+	case "timeline":
+		weeks := 0
+		if raw := r.URL.Query().Get("weeks"); raw != "" {
+			parsed, err := strconv.Atoi(raw)
+			if err != nil || parsed <= 0 {
+				writeError(w, http.StatusBadRequest, "validation_error", fmt.Sprintf("invalid weeks %q", raw), nil)
+				return
+			}
+			weeks = parsed
+		}
+		report, err := svc.Timeline(projectName, weeks)
+		if err != nil {
+			writeAppError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, report)
+	case "epics":
+		report, err := svc.EpicOverview(projectName)
+		if err != nil {
+			writeAppError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, report)
 	default:
 		writeError(w, http.StatusNotFound, "not_found", "API route not found.", nil)
 	}

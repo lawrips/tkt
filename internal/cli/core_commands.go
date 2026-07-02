@@ -231,7 +231,7 @@ func runEdit(ctx context, args []string) error {
 		changed = append(changed, "priority")
 	}
 	if opts.Status != "" {
-		record.Front.Status = opts.Status
+		engine.ApplyStatusTransition(&record, opts.Status, time.Now().UTC())
 		changed = append(changed, "status")
 	}
 	if flagWasSet(visited, "a", "assignee") {

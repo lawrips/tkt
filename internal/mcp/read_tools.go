@@ -193,26 +193,13 @@ func (s *Server) handleTimeline(_ stdctx.Context, req mcplib.CallToolRequest) (*
 	if err != nil {
 		return errResult(fmt.Sprintf("load tickets: %v", err))
 	}
-	closedByWeek := map[string]int{}
-	for _, r := range records {
-		if r.Front.Status != "closed" {
-			continue
-		}
-		created, err := time.Parse(time.RFC3339, r.Front.Created)
-		if err != nil {
-			continue
-		}
-		weekStart := engine.Monday(created).Format("2006-01-02")
-		closedByWeek[weekStart]++
-	}
-	currentWeek := engine.Monday(time.Now().UTC())
-	rows := make([]map[string]any, 0, weeks)
-	for i := weeks - 1; i >= 0; i-- {
-		start := currentWeek.AddDate(0, 0, -7*i)
-		key := start.Format("2006-01-02")
+	buckets := engine.ClosedByWeek(records, s.loadJournal(), weeks, time.Now().UTC())
+	rows := make([]map[string]any, 0, len(buckets))
+	for _, bucket := range buckets {
 		rows = append(rows, map[string]any{
-			"week_start":   key,
-			"closed_count": closedByWeek[key],
+			"week_start":   bucket.WeekStart,
+			"closed_count": bucket.ClosedCount,
+			"ticket_ids":   bucket.TicketIDs,
 		})
 	}
 	return resultJSON(map[string]any{"weeks": rows})

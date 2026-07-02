@@ -492,7 +492,7 @@ func runWatchCycle(projectName string, entry project.ProjectConfig) (int, int, [
 		for _, ticketID := range tickets {
 			action := actions[ticketID]
 			if action == "close" && entry.AutoClose {
-				changed, err := autoCloseTicket(ticketDir, ticketID)
+				changed, err := autoCloseTicket(ticketDir, ticketID, commit.TS)
 				if err != nil {
 					warnings = append(warnings, fmt.Sprintf("auto-close %s failed: %v", ticketID, err))
 				} else if changed {
@@ -669,7 +669,7 @@ func ticketStoreDir(projectName string, entry project.ProjectConfig) (string, er
 	return filepath.Join(entry.Path, ".tickets"), nil
 }
 
-func autoCloseTicket(dir string, ticketID string) (bool, error) {
+func autoCloseTicket(dir string, ticketID string, closedAt string) (bool, error) {
 	path := filepath.Join(dir, ticketID+".md")
 	record, err := ticket.LoadRecord(path)
 	if err != nil {
@@ -681,7 +681,8 @@ func autoCloseTicket(dir string, ticketID string) (bool, error) {
 	if record.Front.Status == "closed" {
 		return false, nil
 	}
-	record.Front.Status = "closed"
+	at, _ := time.Parse(time.RFC3339, closedAt)
+	engine.ApplyStatusTransition(&record, "closed", at)
 	if err := ticket.SaveRecord(record); err != nil {
 		return false, err
 	}

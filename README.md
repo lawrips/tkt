@@ -107,7 +107,7 @@ Doctor gives copy-paste remediation commands, but it does not apply fixes itself
 
 The web interface runs from the same Go binary; there is no separate app server to install. By default it binds only to `127.0.0.1:7420`, serves embedded HTML/CSS/JS, generates a per-launch token, and prints an authenticated local URL.
 
-Use it to browse tickets, inspect context, edit structured fields, add notes, manage deps/links, and view the same setup health surfaced by `tkt doctor`.
+Use it to browse tickets in list or board views, inspect context, edit structured fields, add notes, manage deps/links, review project analytics, and view the same setup health surfaced by `tkt doctor`.
 
 The web process is separate from `tkt serve`. Starting the web workbench does not start sync/watch, and stopping it does not stop sync/watch. It does not run sync, push, pull, fetch, arbitrary shell commands, arbitrary filesystem browsing, or start/stop the serve/watch process. It can run before `tkt init`; in an uninitialized repo it shows setup guidance and any configured projects it can safely read.
 
@@ -129,9 +129,10 @@ These are read-only views computed over ticket files and the commit journal:
 
 - **`tkt epic-view <id>`** — parent ticket with all children, their statuses, and linked commits
 - **`tkt context <id>`** — full working context: parent, dependency status, linked tickets, children, recent commits
-- **`tkt dashboard`** — project summary: in-progress, blocked, ready, and recent commits
+- **`tkt dashboard`** — CLI project summary: in-progress, blocked, ready, and recent commits
 - **`tkt progress`** — closed tickets and commit links within a time window (today or this week)
 - **`tkt stats`** — counts by status, type, and priority
+- **`tkt timeline`** — weekly closed-ticket counts, bucketed by close time when available
 
 ### MCP Server
 

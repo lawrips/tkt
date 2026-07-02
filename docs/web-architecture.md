@@ -196,8 +196,45 @@ Each item includes:
 - assignee
 - tags
 - parent
+- deps
+- created timestamp
+- closed timestamp, when available
 - modified timestamp
 - revision
+
+### `GET /api/projects/{project}/insights/stats`
+
+Returns:
+
+- total ticket count
+- counts by status
+- counts by type
+- counts by priority
+- ready count
+- blocked count
+- diagnostics
+
+### `GET /api/projects/{project}/insights/timeline`
+
+Query params:
+
+- weeks
+
+Returns:
+
+- weekly buckets with week start, closed count, and ticket IDs
+- diagnostics
+
+Closed tickets are bucketed by `closed_at` when present, then journal close
+entries, then file modtime, then created time as a historical fallback.
+
+### `GET /api/projects/{project}/insights/epics`
+
+Returns:
+
+- epic summaries with direct-child completion counts
+- child counts by status
+- diagnostics
 
 ### `GET /api/projects/{project}/tickets/{id}`
 

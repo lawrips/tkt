@@ -8,6 +8,7 @@ type Frontmatter struct {
 	Deps        []string `yaml:"deps,omitempty"`
 	Links       []string `yaml:"links,omitempty"`
 	Created     string   `yaml:"created,omitempty"`
+	ClosedAt    string   `yaml:"closed_at,omitempty"`
 	Type        string   `yaml:"type,omitempty"`
 	Priority    int      `yaml:"priority,omitempty"`
 	Assignee    string   `yaml:"assignee,omitempty"`
