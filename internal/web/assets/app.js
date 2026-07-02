@@ -37,6 +37,11 @@
     health: null,
     healthError: "",
     healthLoaded: false,
+    dashboard: null,
+    dashboardError: "",
+    dashboardProject: "",
+    timelineWeeks: 8,
+    expandedWeek: "",
     editMessage: "",
     editing: false,
     activeView: "tickets",
@@ -63,8 +68,13 @@
     openSidebar: document.getElementById("open-sidebar"),
     toggleSidebar: document.getElementById("toggle-sidebar"),
     navTickets: document.getElementById("nav-tickets"),
+    navDashboard: document.getElementById("nav-dashboard"),
     navHealth: document.getElementById("nav-health"),
     healthColumn: document.getElementById("health-column"),
+    dashboardColumn: document.getElementById("dashboard-column"),
+    dashboard: document.getElementById("dashboard-panel"),
+    dashboardHeading: document.getElementById("dashboard-heading"),
+    refreshDashboard: document.getElementById("refresh-dashboard"),
     ticketColumn: document.getElementById("ticket-column"),
     detailColumn: document.getElementById("detail-column"),
     resizeSidebar: document.getElementById("resize-sidebar"),
@@ -222,7 +232,7 @@
       els.resizeSidebar.hidden = state.sidebarCollapsed;
     }
 
-    if (state.activeView === "health" || boardModeActive()) {
+    if (state.activeView === "health" || state.activeView === "dashboard" || boardModeActive()) {
       if (els.resizeList) els.resizeList.hidden = true;
       if (state.sidebarCollapsed) {
         els.workspace.style.gridTemplateColumns = "minmax(" + PANE_LIMITS.detail.min + "px, 1fr)";
@@ -426,9 +436,16 @@
   }
 
   function setActiveView(view) {
-    state.activeView = view === "health" ? "health" : "tickets";
+    if (view === "health" || view === "dashboard") {
+      state.activeView = view;
+    } else {
+      state.activeView = "tickets";
+    }
     if (els.navTickets) {
       els.navTickets.setAttribute("aria-current", state.activeView === "tickets" ? "page" : "false");
+    }
+    if (els.navDashboard) {
+      els.navDashboard.setAttribute("aria-current", state.activeView === "dashboard" ? "page" : "false");
     }
     if (els.navHealth) {
       els.navHealth.setAttribute("aria-current", state.activeView === "health" ? "page" : "false");
@@ -436,9 +453,15 @@
     if (els.healthColumn) {
       els.healthColumn.hidden = state.activeView !== "health";
     }
+    if (els.dashboardColumn) {
+      els.dashboardColumn.hidden = state.activeView !== "dashboard";
+    }
     updateLayoutClasses();
     if (state.activeView === "health" && !state.healthLoaded) {
       loadHealth();
+    }
+    if (state.activeView === "dashboard" && state.dashboardProject !== state.selectedProject) {
+      loadDashboard();
     }
   }
 
@@ -452,6 +475,7 @@
     if (!els.workspace) return;
     els.workspace.classList.toggle("view-tickets", state.activeView === "tickets");
     els.workspace.classList.toggle("view-health", state.activeView === "health");
+    els.workspace.classList.toggle("view-dashboard", state.activeView === "dashboard");
     const showDetail = state.activeView === "tickets" && isMobile() && state.mobileView === "detail" && !!state.selectedTicket;
     els.workspace.classList.toggle("view-detail", showDetail);
     els.workspace.classList.toggle("view-list", state.activeView === "tickets" && !showDetail);
@@ -784,6 +808,323 @@
     if (status === "pass") return "ok";
     if (status === "fail") return "fail";
     return "warn";
+  }
+
+  /* ── Dashboard ── */
+
+  const TIMELINE_WEEK_OPTIONS = [4, 8, 12, 26];
+  const STATUS_LABELS = {
+    open: "Open",
+    in_progress: "In progress",
+    needs_testing: "Needs testing",
+    closed: "Closed"
+  };
+
+  async function loadDashboard() {
+    if (!els.dashboard) return;
+    state.dashboardError = "";
+    state.expandedWeek = "";
+    if (els.dashboardHeading) {
+      els.dashboardHeading.textContent = state.selectedProject || "Dashboard";
+    }
+    if (!state.selectedProject) {
+      state.dashboard = null;
+      state.dashboardProject = "";
+      els.dashboard.innerHTML = "<p class=\"muted\">Choose a configured project to see its dashboard.</p>";
+      return;
+    }
+    els.dashboard.innerHTML = "<p class=\"loading\">Loading dashboard...</p>";
+    const project = state.selectedProject;
+    const base = `/api/projects/${encodeURIComponent(project)}`;
+    try {
+      const [stats, timeline, epics, ready, blocked, all] = await Promise.all([
+        api(`${base}/insights/stats`),
+        api(`${base}/insights/timeline?weeks=${state.timelineWeeks}`),
+        api(`${base}/insights/epics`),
+        api(`${base}/tickets?ready=true&sort=priority`),
+        api(`${base}/tickets?blocked=true&sort=priority`),
+        api(`${base}/tickets`)
+      ]);
+      if (state.selectedProject !== project) return;
+      const byID = {};
+      for (const item of all.items || []) {
+        byID[item.id] = item;
+      }
+      state.dashboard = {
+        stats,
+        timeline: timeline.weeks || [],
+        epics: epics.epics || [],
+        ready: ready.items || [],
+        blocked: blocked.items || [],
+        byID
+      };
+      state.dashboardProject = project;
+      renderDashboard();
+    } catch (err) {
+      if (state.selectedProject !== project) return;
+      state.dashboard = null;
+      state.dashboardProject = "";
+      state.dashboardError = err.message || "Dashboard unavailable.";
+      renderDashboard();
+    }
+  }
+
+  function renderDashboard() {
+    if (!els.dashboard) return;
+    if (els.dashboardHeading) {
+      els.dashboardHeading.textContent = state.selectedProject || "Dashboard";
+    }
+    if (state.dashboardError) {
+      els.dashboard.innerHTML = notice(escapeHTML(state.dashboardError), "error");
+      return;
+    }
+    const data = state.dashboard;
+    if (!data) {
+      els.dashboard.innerHTML = "";
+      return;
+    }
+    els.dashboard.innerHTML = `
+      ${overviewSection(data.stats)}
+      ${queueSection("Ready to start", data.ready, "ready")}
+      ${queueSection("Blocked", data.blocked, "blocked")}
+      ${timelineSection(data.timeline)}
+      ${epicsSection(data.epics)}
+    `;
+    applyBarWidths();
+  }
+
+  function applyBarWidths() {
+    els.dashboard.querySelectorAll("[data-bar-width]").forEach(el => {
+      el.style.width = el.dataset.barWidth + "%";
+    });
+  }
+
+  function barWidth(count, max) {
+    if (!max || !count) return 0;
+    return Math.max(2, Math.round((count / max) * 100));
+  }
+
+  function overviewSection(stats) {
+    const byStatus = stats.by_status || {};
+    const cards = [
+      { label: "Total", value: stats.total || 0 },
+      { label: "Open", value: byStatus.open || 0 },
+      { label: "In progress", value: byStatus.in_progress || 0 },
+      { label: "Needs testing", value: byStatus.needs_testing || 0 },
+      { label: "Closed", value: byStatus.closed || 0 },
+      { label: "Ready", value: stats.ready || 0, kind: "ready" },
+      { label: "Blocked", value: stats.blocked || 0, kind: "blocked" }
+    ];
+    const cardHTML = cards.map(card => `
+      <div class="stat-card${card.kind ? " stat-card-" + card.kind : ""}">
+        <span class="stat-value">${Number(card.value)}</span>
+        <span class="stat-label">${escapeHTML(card.label)}</span>
+      </div>
+    `).join("");
+    return `
+      <section class="insight-section">
+        <h3 class="section-label">Overview</h3>
+        <div class="stat-cards">${cardHTML}</div>
+        ${distributionBlock("By type", stats.by_type || {})}
+        ${distributionBlock("By priority", priorityEntries(stats.by_priority || {}))}
+      </section>
+    `;
+  }
+
+  function priorityEntries(byPriority) {
+    const entries = {};
+    for (let p = 0; p <= 4; p++) {
+      const count = Number(byPriority[p] || byPriority[String(p)] || 0);
+      if (count > 0) entries["p" + p] = count;
+    }
+    return entries;
+  }
+
+  function distributionBlock(title, counts) {
+    const entries = Object.keys(counts)
+      .map(key => ({ key, count: Number(counts[key] || 0) }))
+      .filter(entry => entry.count > 0)
+      .sort((a, b) => b.count - a.count || (a.key < b.key ? -1 : 1));
+    if (!entries.length) return "";
+    const max = entries[0].count;
+    const rows = entries.map(entry => `
+      <div class="insight-dist-row">
+        <span class="insight-dist-label">${escapeHTML(entry.key)}</span>
+        <div class="insight-bar-track"><div class="insight-bar-fill" data-bar-width="${barWidth(entry.count, max)}"></div></div>
+        <span class="insight-dist-count">${entry.count}</span>
+      </div>
+    `).join("");
+    return `
+      <div class="insight-distribution">
+        <h4 class="aside-label">${escapeHTML(title)}</h4>
+        ${rows}
+      </div>
+    `;
+  }
+
+  function queueSection(title, items, kind) {
+    let body;
+    if (!items.length) {
+      body = kind === "ready"
+        ? '<p class="muted">Nothing is ready to start.</p>'
+        : '<p class="muted">No blocked tickets.</p>';
+    } else {
+      body = `<div class="queue-list">${items.map(item => queueItem(item, kind)).join("")}</div>`;
+    }
+    return `
+      <section class="insight-section">
+        <div class="insight-section-head">
+          <h3 class="section-label">${escapeHTML(title)}</h3>
+          <span class="insight-section-count">${items.length}</span>
+        </div>
+        ${body}
+      </section>
+    `;
+  }
+
+  function queueItem(item, kind) {
+    const epic = isEpic(item);
+    const meta = [item.id, item.type, "p" + Number(item.priority || 0)].filter(Boolean).join(" · ");
+    const blockers = kind === "blocked" ? blockingDeps(item) : [];
+    const blockerHTML = blockers.length
+      ? `<span class="queue-blockers">blocked by ${blockers.map(dep => escapeHTML(dep)).join(", ")}</span>`
+      : "";
+    return `
+      <button class="queue-item" type="button" data-nav-ticket="${escapeHTML(item.id)}">
+        <span class="ticket-row-top">
+          ${epic ? '<span class="type-mark type-mark-epic">Epic</span>' : ""}
+          <span class="row-title">${escapeHTML(item.title || "(untitled)")}</span>
+        </span>
+        <span class="row-meta">${escapeHTML(meta)}</span>
+        ${blockerHTML}
+      </button>
+    `;
+  }
+
+  function blockingDeps(item) {
+    const byID = state.dashboard ? state.dashboard.byID : {};
+    return (item.deps || []).filter(dep => {
+      const target = byID[dep];
+      return !target || target.status !== "closed";
+    });
+  }
+
+  function formatWeekLabel(key) {
+    const date = new Date(key + "T00:00:00Z");
+    if (Number.isNaN(date.getTime())) return key;
+    return date.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+  }
+
+  function mondayKey(value) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    const day = date.getUTCDay() === 0 ? 7 : date.getUTCDay();
+    const monday = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() - (day - 1)));
+    return monday.toISOString().slice(0, 10);
+  }
+
+  function timelineSection(weeks) {
+    const pills = TIMELINE_WEEK_OPTIONS.map(option => `
+      <button type="button" class="sort-pill${option === state.timelineWeeks ? " active" : ""}" data-weeks="${option}">${option}w</button>
+    `).join("");
+    const max = weeks.reduce((acc, week) => Math.max(acc, week.closed_count || 0), 0);
+    const hasClosed = max > 0;
+    const rows = weeks.map(week => {
+      const key = week.week_start;
+      const expanded = state.expandedWeek === key;
+      return `
+        <button type="button" class="timeline-row${expanded ? " expanded" : ""}" data-week-toggle="${escapeHTML(key)}" aria-expanded="${expanded}">
+          <span class="timeline-week" title="Week of ${escapeHTML(key)}">${escapeHTML(formatWeekLabel(key))}</span>
+          <span class="insight-bar-track"><span class="insight-bar-fill" data-bar-width="${barWidth(week.closed_count || 0, max)}"></span></span>
+          <span class="timeline-count">${Number(week.closed_count || 0)}</span>
+        </button>
+        ${expanded ? weekTicketList(key) : ""}
+      `;
+    }).join("");
+    return `
+      <section class="insight-section">
+        <div class="insight-section-head">
+          <h3 class="section-label">Closed per week</h3>
+          <div class="weeks-toggle" role="group" aria-label="Timeline window">${pills}</div>
+        </div>
+        ${hasClosed ? "" : '<p class="muted">No tickets closed in this window.</p>'}
+        <div class="timeline-rows">${rows}</div>
+      </section>
+    `;
+  }
+
+  function weekTicketList(weekKey) {
+    const byID = state.dashboard ? state.dashboard.byID : {};
+    const closed = Object.values(byID)
+      .filter(item => item.status === "closed" && mondayKey(item.created) === weekKey)
+      .sort((a, b) => (a.created < b.created ? 1 : -1));
+    if (!closed.length) {
+      return '<p class="muted timeline-week-empty">No closed tickets recorded for this week.</p>';
+    }
+    const items = closed.map(item => `
+      <button class="queue-item" type="button" data-nav-ticket="${escapeHTML(item.id)}">
+        <span class="ticket-row-top"><span class="row-title">${escapeHTML(item.title || "(untitled)")}</span></span>
+        <span class="row-meta">${escapeHTML(item.id)} · ${escapeHTML(item.type || "")}</span>
+      </button>
+    `).join("");
+    return `<div class="timeline-week-tickets">${items}</div>`;
+  }
+
+  function epicsSection(epics) {
+    let body;
+    if (!epics.length) {
+      body = '<p class="muted">No epics in this project.</p>';
+    } else {
+      body = `<div class="epic-rows">${epics.map(epicRow).join("")}</div>`;
+    }
+    return `
+      <section class="insight-section">
+        <div class="insight-section-head">
+          <h3 class="section-label">Epics</h3>
+          <span class="insight-section-count">${epics.length}</span>
+        </div>
+        ${body}
+      </section>
+    `;
+  }
+
+  function epicRow(epic) {
+    const total = Number(epic.total_children || 0);
+    const closed = Number(epic.closed_children || 0);
+    const pct = total ? Math.round((closed / total) * 100) : 0;
+    const statusCounts = epic.children_by_status || {};
+    const chips = Object.keys(STATUS_LABELS)
+      .filter(status => statusCounts[status])
+      .map(status => badge(`${statusCounts[status]} ${STATUS_LABELS[status].toLowerCase()}`, "status-" + status))
+      .join("");
+    const progress = total
+      ? `
+        <div class="epic-progress">
+          <span class="insight-bar-track"><span class="insight-bar-fill" data-bar-width="${pct}"></span></span>
+          <span class="epic-progress-count">${closed}/${total}</span>
+        </div>
+      `
+      : '<p class="muted epic-no-children">No children yet.</p>';
+    return `
+      <div class="epic-row">
+        <div class="epic-row-head">
+          <button class="epic-link" type="button" data-nav-ticket="${escapeHTML(epic.id)}">
+            <span class="row-title">${escapeHTML(epic.title || "(untitled)")}</span>
+            <span class="row-meta">${escapeHTML(epic.id)} · ${escapeHTML(epic.status || "")}</span>
+          </button>
+          ${total ? `<button class="small-button" type="button" data-parent-filter="${escapeHTML(epic.id)}">Children</button>` : ""}
+        </div>
+        ${progress}
+        ${chips ? `<div class="badge-row">${chips}</div>` : ""}
+      </div>
+    `;
+  }
+
+  async function openTicketFromDashboard(ticketID) {
+    if (!ticketID) return;
+    setActiveView("tickets");
+    state.editMessage = "";
+    await loadDetail(ticketID, { resetHistory: true });
   }
 
   function renderSetup() {
@@ -1439,11 +1780,18 @@
     state.viewMode = viewModeFor(state.selectedProject);
     state.boardDetailOpen = false;
     state.boardNotice = "";
+    state.dashboard = null;
+    state.dashboardProject = "";
+    state.dashboardError = "";
+    state.expandedWeek = "";
     syncViewToggle();
     setMobileView("list");
     setSidebarCollapsed(true);
     renderProjects();
     loadTickets();
+    if (state.activeView === "dashboard") {
+      loadDashboard();
+    }
   });
 
   els.detail.addEventListener("submit", async event => {
@@ -1543,11 +1891,44 @@
       loadHealth();
     });
   }
+  if (els.refreshDashboard) {
+    els.refreshDashboard.addEventListener("click", () => loadDashboard());
+  }
   if (els.navTickets) {
     els.navTickets.addEventListener("click", () => setActiveView("tickets"));
   }
+  if (els.navDashboard) {
+    els.navDashboard.addEventListener("click", () => setActiveView("dashboard"));
+  }
   if (els.navHealth) {
     els.navHealth.addEventListener("click", () => setActiveView("health"));
+  }
+
+  if (els.dashboard) {
+    els.dashboard.addEventListener("click", event => {
+      const weeksButton = event.target.closest("[data-weeks]");
+      if (weeksButton) {
+        state.timelineWeeks = Number(weeksButton.dataset.weeks) || 8;
+        loadDashboard();
+        return;
+      }
+      const weekToggle = event.target.closest("[data-week-toggle]");
+      if (weekToggle) {
+        const key = weekToggle.dataset.weekToggle;
+        state.expandedWeek = state.expandedWeek === key ? "" : key;
+        renderDashboard();
+        return;
+      }
+      const childrenButton = event.target.closest("[data-parent-filter]");
+      if (childrenButton) {
+        applyParentFilter(childrenButton.dataset.parentFilter);
+        return;
+      }
+      const navButton = event.target.closest("[data-nav-ticket]");
+      if (navButton) {
+        openTicketFromDashboard(navButton.dataset.navTicket);
+      }
+    });
   }
 
   els.filters.addEventListener("input", () => {

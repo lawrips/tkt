@@ -81,6 +81,8 @@ type TicketSummary struct {
 	Assignee string   `json:"assignee"`
 	Parent   string   `json:"parent"`
 	Tags     []string `json:"tags"`
+	Deps     []string `json:"deps"`
+	Created  string   `json:"created"`
 	Modified string   `json:"modified"`
 	Revision Revision `json:"revision"`
 }
@@ -946,6 +948,10 @@ func SummaryFromRecord(record ticket.Record) (TicketSummary, error) {
 	if tags == nil {
 		tags = []string{}
 	}
+	deps := record.Front.Deps
+	if deps == nil {
+		deps = []string{}
+	}
 	modified := ""
 	if !record.ModTime.IsZero() {
 		modified = record.ModTime.UTC().Format(time.RFC3339Nano)
@@ -959,6 +965,8 @@ func SummaryFromRecord(record ticket.Record) (TicketSummary, error) {
 		Assignee: record.Front.Assignee,
 		Parent:   record.Front.Parent,
 		Tags:     tags,
+		Deps:     deps,
+		Created:  record.Front.Created,
 		Modified: modified,
 		Revision: revision,
 	}, nil

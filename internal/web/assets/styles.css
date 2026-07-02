@@ -123,6 +123,21 @@
   --semantic-board-toggle-active-bg: var(--raw-neutral-0);
   --semantic-board-toggle-active-text: var(--raw-neutral-900);
 
+  /* Insights / dashboard */
+  --semantic-insight-card-bg: var(--raw-neutral-0);
+  --semantic-insight-card-border: var(--raw-neutral-150);
+  --semantic-insight-value-text: var(--raw-neutral-900);
+  --semantic-insight-label-text: var(--raw-neutral-500);
+  --semantic-insight-ready-value-text: var(--raw-accent-700);
+  --semantic-insight-blocked-value-text: var(--raw-amber-700);
+  --semantic-insight-bar-track-bg: var(--raw-neutral-100);
+  --semantic-insight-bar-fill-bg: var(--raw-accent-600);
+  --semantic-insight-row-hover-bg: var(--raw-neutral-100);
+  --semantic-insight-row-expanded-bg: var(--raw-accent-a08);
+  --semantic-insight-blocker-text: var(--raw-amber-700);
+  --semantic-insight-count-bg: var(--raw-neutral-100);
+  --semantic-insight-count-text: var(--raw-neutral-500);
+
   /* Content & detail */
   --semantic-content-bg: var(--raw-neutral-50);
   --semantic-content-surface-bg: var(--raw-neutral-0);
@@ -586,12 +601,19 @@ body.is-resizing * {
 
 .workspace.view-health .ticket-column,
 .workspace.view-health .detail-column,
-.workspace.view-health .resize-list {
+.workspace.view-health .resize-list,
+.workspace.view-dashboard .ticket-column,
+.workspace.view-dashboard .detail-column,
+.workspace.view-dashboard .resize-list {
   display: none;
 }
 
 .workspace.view-tickets .health-column {
   display: none;
+}
+
+.dashboard-column {
+  background: var(--semantic-content-bg);
 }
 
 /* ── Project drawer ── */
@@ -914,6 +936,286 @@ body.is-resizing * {
 
 .health-check code {
   color: var(--semantic-content-text-strong);
+}
+
+/* ── Dashboard ── */
+
+.dashboard-panel {
+  display: grid;
+  gap: var(--space-7);
+  max-width: 860px;
+  padding: var(--space-5) var(--space-6);
+}
+
+.insight-section {
+  display: grid;
+  gap: var(--space-3);
+  align-content: start;
+}
+
+.insight-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.insight-section-head .section-label {
+  margin: 0;
+}
+
+.insight-section-count {
+  min-width: 20px;
+  text-align: center;
+  border-radius: 999px;
+  padding: 1px var(--space-1);
+  background: var(--semantic-insight-count-bg);
+  color: var(--semantic-insight-count-text);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+  gap: var(--space-2);
+}
+
+.stat-card {
+  display: grid;
+  gap: 2px;
+  padding: var(--space-3);
+  border: 1px solid var(--semantic-insight-card-border);
+  border-radius: var(--radius-lg);
+  background: var(--semantic-insight-card-bg);
+}
+
+.stat-value {
+  color: var(--semantic-insight-value-text);
+  font-size: 22px;
+  font-weight: 650;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-label {
+  color: var(--semantic-insight-label-text);
+  font-size: var(--text-meta);
+  font-weight: 500;
+}
+
+.stat-card-ready .stat-value {
+  color: var(--semantic-insight-ready-value-text);
+}
+
+.stat-card-blocked .stat-value {
+  color: var(--semantic-insight-blocked-value-text);
+}
+
+.insight-distribution {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.insight-dist-row {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.insight-dist-label {
+  color: var(--semantic-insight-label-text);
+  font-size: var(--text-meta);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.insight-bar-track {
+  display: block;
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--semantic-insight-bar-track-bg);
+  overflow: hidden;
+}
+
+.insight-bar-fill {
+  display: block;
+  width: 0%;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--semantic-insight-bar-fill-bg);
+  transition: width 0.2s ease;
+}
+
+.insight-dist-count {
+  color: var(--semantic-insight-label-text);
+  font-size: var(--text-meta);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.queue-list {
+  display: grid;
+  gap: 0;
+}
+
+.queue-item {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  min-height: 0;
+  padding: var(--space-2) var(--space-2);
+  border: 0;
+  border-bottom: 1px solid var(--semantic-content-border);
+  border-radius: 0;
+  background: transparent;
+  text-align: left;
+  font-weight: 400;
+}
+
+.queue-item:last-child {
+  border-bottom: 0;
+}
+
+.queue-item:hover {
+  background: var(--semantic-insight-row-hover-bg);
+  border-color: var(--semantic-content-border);
+}
+
+.queue-blockers {
+  color: var(--semantic-insight-blocker-text);
+  font-size: var(--text-meta);
+  font-family: var(--font-mono);
+}
+
+.weeks-toggle {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.timeline-rows {
+  display: grid;
+  gap: 2px;
+}
+
+.timeline-row {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) 40px;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 0;
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  text-align: left;
+  font-weight: 400;
+}
+
+.timeline-row:hover {
+  background: var(--semantic-insight-row-hover-bg);
+}
+
+.timeline-row.expanded {
+  background: var(--semantic-insight-row-expanded-bg);
+}
+
+.timeline-week {
+  color: var(--semantic-insight-label-text);
+  font-size: var(--text-meta);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.timeline-count {
+  color: var(--semantic-content-text-strong);
+  font-size: var(--text-meta);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.timeline-week-tickets {
+  display: grid;
+  gap: 0;
+  margin: var(--space-1) 0 var(--space-2);
+  padding-left: var(--space-4);
+  border-left: 2px solid var(--semantic-content-border-strong);
+}
+
+.timeline-week-empty {
+  margin: var(--space-1) 0 var(--space-2);
+  padding-left: var(--space-4);
+}
+
+.epic-rows {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.epic-row {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--semantic-insight-card-border);
+  border-radius: var(--radius-lg);
+  background: var(--semantic-insight-card-bg);
+}
+
+.epic-row-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.epic-row-head .small-button {
+  margin-top: 0;
+  flex-shrink: 0;
+}
+
+.epic-link {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font-weight: 400;
+}
+
+.epic-link:hover {
+  background: transparent;
+  border-color: transparent;
+}
+
+.epic-link:hover .row-title {
+  color: var(--semantic-content-link-text);
+}
+
+.epic-progress {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.epic-progress-count {
+  color: var(--semantic-insight-label-text);
+  font-size: var(--text-meta);
+  font-variant-numeric: tabular-nums;
+}
+
+.epic-no-children {
+  margin: 0;
 }
 
 /* ── Project list ── */
@@ -2112,6 +2414,14 @@ body.is-resizing * {
 
   .workspace.view-health .health-column {
     display: flex;
+  }
+
+  .workspace.view-dashboard .dashboard-column {
+    display: flex;
+  }
+
+  .dashboard-panel {
+    padding: var(--space-4);
   }
 
   .workspace.view-detail .detail-column {

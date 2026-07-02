@@ -356,6 +356,49 @@ func TestEmbeddedAppIncludesBoardView(t *testing.T) {
 	}
 }
 
+func TestEmbeddedAppIncludesDashboardView(t *testing.T) {
+	index, err := assets.ReadFile("assets/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	appJS, err := assets.ReadFile("assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	styles, err := assets.ReadFile("assets/styles.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	combined := string(index) + "\n" + string(appJS) + "\n" + string(styles)
+	for _, required := range []string{
+		"nav-dashboard",
+		"dashboard-column",
+		"dashboard-panel",
+		"refresh-dashboard",
+		"view-dashboard",
+		"/insights/stats",
+		"/insights/timeline",
+		"/insights/epics",
+		"ready=true",
+		"blocked=true",
+		"loadDashboard",
+		"stat-card",
+		"queue-item",
+		"queue-blockers",
+		"timeline-row",
+		"data-week-toggle",
+		"data-weeks",
+		"epic-row",
+		"data-parent-filter",
+		"insight-bar-fill",
+		"--semantic-insight-",
+	} {
+		if !strings.Contains(combined, required) {
+			t.Fatalf("embedded app missing dashboard marker %q", required)
+		}
+	}
+}
+
 func TestEmbeddedAppIncludesMarkdownRendering(t *testing.T) {
 	index, err := assets.ReadFile("assets/index.html")
 	if err != nil {
