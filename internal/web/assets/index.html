@@ -41,10 +41,11 @@
       <div id="resize-sidebar" class="resize-handle" role="separator" aria-orientation="vertical" aria-label="Resize projects pane" tabindex="-1"></div>
       <section id="ticket-column" class="ticket-column column-pane" aria-label="Tickets">
         <div class="panel-header ticket-panel-header">
-          <button id="open-sidebar" class="button-secondary project-drawer-button" type="button" hidden title="Open projects" aria-label="Open projects">Projects</button>
-          <div>
-            <h2 id="ticket-heading">Tickets</h2>
-            <p id="ticket-count" class="muted">No project selected</p>
+          <div class="ticket-header-main">
+            <button id="open-sidebar" class="button-secondary project-drawer-button" type="button" hidden title="Open projects" aria-label="Open projects">Projects</button>
+            <div class="ticket-heading-block">
+              <h2 id="ticket-heading">Tickets</h2>
+            </div>
           </div>
           <div class="view-toggle" role="group" aria-label="Ticket view mode">
             <button id="view-mode-list" class="view-toggle-button" type="button" aria-pressed="true">List</button>
@@ -68,6 +69,7 @@
             <option value="epic">Epic</option>
             <option value="chore">Chore</option>
           </select>
+          <span id="ticket-count" class="ticket-result-count is-empty" aria-live="polite" aria-label="Authentication required">—</span>
         </form>
         <div class="panel-scroll ticket-list-scroll">
           <div id="ticket-list" class="ticket-list"></div>

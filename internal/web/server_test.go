@@ -309,8 +309,12 @@ func TestEmbeddedAppIncludesDiscoveryControls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	combined := string(index) + "\n" + string(appJS)
-	for _, required := range []string{"ticket-inbox", "sort-pill", "data-sort-field", "open-sidebar", "toggle-sidebar", "sidebar-collapsed", "sidebar-drawer-open", "resize-handle", "type-epic", "type-mark-epic", "filter-chip", "tkt-web-selected-project", "tkt-web-sidebar-collapsed", "tkt-web-pane-widths"} {
+	styles, err := assets.ReadFile("assets/styles.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	combined := string(index) + "\n" + string(appJS) + "\n" + string(styles)
+	for _, required := range []string{"ticket-inbox", "sort-pill", "data-sort-field", "open-sidebar", "toggle-sidebar", "sidebar-collapsed", "sidebar-drawer-open", "resize-handle", "type-epic", "type-mark-epic", "ticket-result-count", "flex-wrap: nowrap", "tkt-web-selected-project", "tkt-web-sidebar-collapsed", "tkt-web-pane-widths", "showUnauthenticatedState", "tkt help web", "Not authenticated"} {
 		if !strings.Contains(combined, required) {
 			t.Fatalf("embedded app missing discovery marker %q", required)
 		}
@@ -336,6 +340,9 @@ func TestEmbeddedAppIncludesBoardView(t *testing.T) {
 		"view-mode-board",
 		"view-toggle",
 		".view-toggle {",
+		"ticket-header-main",
+		"ticket-heading-block",
+		"justify-content: space-between",
 		"ticket-board",
 		"board-column",
 		"board-card",
@@ -398,6 +405,9 @@ func TestEmbeddedAppIncludesAnalyticsView(t *testing.T) {
 		"loadDashboard",
 		"preserveScroll",
 		"stat-card",
+		"stat-card-action",
+		"data-status-filter",
+		"applyStatusFilter",
 		"queue-item",
 		"timeline-row",
 		"data-week-toggle",

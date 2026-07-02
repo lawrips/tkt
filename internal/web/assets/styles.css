@@ -709,8 +709,31 @@ body.is-resizing * {
 }
 
 .ticket-panel-header {
-  justify-content: flex-start;
+  justify-content: space-between;
   gap: var(--space-3);
+}
+
+.ticket-header-main {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--space-3);
+}
+
+.ticket-heading-block {
+  min-width: 0;
+}
+
+.ticket-heading-block h2 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ticket-heading-block h2 {
+  font-size: var(--text-title);
+  line-height: var(--text-title-leading);
+  letter-spacing: var(--text-title-tracking);
 }
 
 .view-toggle {
@@ -991,6 +1014,23 @@ body.is-resizing * {
   border: 1px solid var(--semantic-insight-card-border);
   border-radius: var(--radius-lg);
   background: var(--semantic-insight-card-bg);
+  text-align: left;
+}
+
+.stat-card-action {
+  min-height: 0;
+  color: inherit;
+  cursor: pointer;
+}
+
+.stat-card-action:hover {
+  background: var(--semantic-insight-row-hover-bg);
+  border-color: var(--semantic-content-border-strong);
+}
+
+.stat-card-action:focus-visible {
+  outline: 2px solid var(--semantic-app-focus-ring);
+  outline-offset: 2px;
 }
 
 .stat-value {
@@ -1592,7 +1632,7 @@ body.is-resizing * {
 
 .filters {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-4);
@@ -1612,8 +1652,8 @@ body.is-resizing * {
 }
 
 .filters input {
-  flex: 1 1 180px;
-  min-width: 120px;
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .filters select {
@@ -1633,37 +1673,22 @@ body.is-resizing * {
   box-shadow: var(--semantic-shadow-focus);
 }
 
-.filter-chip {
+.ticket-result-count {
+  flex: 0 0 auto;
   display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  width: fit-content;
-  margin-left: var(--space-2);
-  border: 0;
-  border-radius: var(--radius-sm);
-  padding: 1px var(--space-1) 1px var(--space-2);
-  background: var(--semantic-chip-bg);
-  color: var(--semantic-chip-text);
+  align-items: baseline;
+  margin-left: 0;
+  color: var(--semantic-content-text-muted);
   font-size: var(--text-meta);
   font-weight: 500;
-  font-family: var(--font-ui);
+  white-space: nowrap;
 }
 
-.filter-chip-clear {
-  width: 16px;
-  min-width: 16px;
-  min-height: 16px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: var(--semantic-control-ghost-bg);
-  color: var(--semantic-control-ghost-text);
-  line-height: 1;
-  font-size: 13px;
-}
-
-.filter-chip-clear:hover {
-  background: var(--semantic-control-ghost-hover-bg);
+.ticket-result-shown,
+.ticket-result-total {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  min-width: var(--ticket-count-num-width, 3ch);
 }
 
 /* ── Chips & badges ── */
@@ -2433,5 +2458,9 @@ body.is-resizing * {
   .filters input,
   .filters select {
     width: 100%;
+  }
+
+  .ticket-result-count {
+    margin-left: 0;
   }
 }

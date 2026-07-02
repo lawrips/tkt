@@ -522,6 +522,21 @@
     loadTickets();
   }
 
+  function applyStatusFilter(status) {
+    if (!STATUS_LABELS[status]) return;
+    state.filters.search = "";
+    state.filters.parent = "";
+    state.filters.status = status;
+    state.filters.type = "";
+    state.boardDetailOpen = false;
+    state.boardNotice = "";
+    state.viewMode = "list";
+    syncViewToggle();
+    syncFilterControls();
+    setActiveView("tickets");
+    loadTickets();
+  }
+
   function updateLayoutClasses() {
     if (!els.workspace) return;
     els.workspace.classList.toggle("view-tickets", state.activeView === "tickets");
@@ -737,10 +752,41 @@
     els.status.className = "status-pill" + (className ? " " + className : "");
   }
 
+  function clearStoredToken() {
+    state.token = "";
+    try {
+      window.sessionStorage.removeItem("tkt-web-token");
+    } catch (_err) {
+      // Ignore storage failures in restricted browser contexts.
+    }
+  }
+
+  function isUnauthorizedError(err) {
+    if (!err) return false;
+    if (err.code === "unauthorized") return true;
+    const message = String(err.message || "").toLowerCase();
+    return message.includes("token") || message.includes("unauthorized");
+  }
+
+  function showUnauthenticatedState() {
+    clearStoredToken();
+    setStatus("Not authenticated", "warn");
+    els.ticketHeading.textContent = "Tickets";
+    els.ticketCount.className = "ticket-result-count is-empty";
+    els.ticketCount.textContent = "—";
+    els.ticketCount.setAttribute("aria-label", "Authentication required");
+    const message = notice(
+      "Open the authenticated URL printed by <code>tkt web</code>. Run <code>tkt help web</code> for setup details.",
+      "warning"
+    );
+    els.setup.innerHTML = message;
+    els.tickets.innerHTML = message;
+    els.projects.innerHTML = "";
+  }
+
   async function loadSession() {
     if (!state.token) {
-      setStatus("Missing token", "warn");
-      els.setup.innerHTML = notice("Open TKT Web from the authenticated URL printed by `tkt web`.", "warning");
+      showUnauthenticatedState();
       return;
     }
     setStatus("Loading");
@@ -762,8 +808,13 @@
         renderTickets();
       }
     } catch (err) {
+      if (isUnauthorizedError(err)) {
+        showUnauthenticatedState();
+        return;
+      }
       setStatus("Cannot connect", "warn");
-      els.setup.innerHTML = notice(err.message, "error");
+      els.setup.innerHTML = notice(escapeHTML(err.message), "error");
+      els.tickets.innerHTML = notice(escapeHTML(err.message), "error");
     }
   }
 
@@ -980,19 +1031,26 @@
     const byStatus = stats.by_status || {};
     const cards = [
       { label: "Total", value: stats.total || 0 },
-      { label: "Open", value: byStatus.open || 0 },
-      { label: "In progress", value: byStatus.in_progress || 0 },
-      { label: "Needs testing", value: byStatus.needs_testing || 0 },
-      { label: "Closed", value: byStatus.closed || 0 },
+      { label: "Open", value: byStatus.open || 0, status: "open" },
+      { label: "In progress", value: byStatus.in_progress || 0, status: "in_progress" },
+      { label: "Needs testing", value: byStatus.needs_testing || 0, status: "needs_testing" },
+      { label: "Closed", value: byStatus.closed || 0, status: "closed" },
       { label: "Ready", value: stats.ready || 0, kind: "ready" },
       { label: "Blocked", value: stats.blocked || 0, kind: "blocked" }
     ];
-    const cardHTML = cards.map(card => `
-      <div class="stat-card${card.kind ? " stat-card-" + card.kind : ""}">
+    const cardHTML = cards.map(card => {
+      const className = `stat-card${card.kind ? " stat-card-" + card.kind : ""}${card.status ? " stat-card-action" : ""}`;
+      const body = `
         <span class="stat-value">${Number(card.value)}</span>
         <span class="stat-label">${escapeHTML(card.label)}</span>
-      </div>
-    `).join("");
+      `;
+      if (!card.status) return `<div class="${className}">${body}</div>`;
+      return `
+        <button class="${className}" type="button" data-status-filter="${escapeHTML(card.status)}" aria-label="Show ${escapeHTML(card.label.toLowerCase())} tickets">
+          ${body}
+        </button>
+      `;
+    }).join("");
     return `
       <section class="insight-section">
         <h3 class="section-label">Overview</h3>
@@ -1131,6 +1189,10 @@
   }
 
   async function loadTickets() {
+    if (!state.token) {
+      showUnauthenticatedState();
+      return;
+    }
     if (!state.selectedProject) {
       renderTickets();
       updateLayoutClasses();
@@ -1169,20 +1231,40 @@
     }
   }
 
+  function renderTicketCount() {
+    if (!state.token) {
+      els.ticketCount.className = "ticket-result-count is-empty";
+      els.ticketCount.textContent = "—";
+      els.ticketCount.setAttribute("aria-label", "Authentication required");
+      els.ticketCount.style.removeProperty("--ticket-count-num-width");
+      return;
+    }
+    if (!state.selectedProject) {
+      els.ticketCount.className = "ticket-result-count is-empty";
+      els.ticketCount.textContent = "—";
+      els.ticketCount.setAttribute("aria-label", "No project selected");
+      els.ticketCount.style.removeProperty("--ticket-count-num-width");
+      return;
+    }
+    const shown = state.tickets.length;
+    const total = state.ticketUniverse.length || shown;
+    const digits = Math.max(String(total).length, 1);
+    els.ticketCount.className = "ticket-result-count";
+    els.ticketCount.style.setProperty("--ticket-count-num-width", `${digits}ch`);
+    els.ticketCount.setAttribute("aria-label", `${shown} of ${total} ticket${total === 1 ? "" : "s"}`);
+    els.ticketCount.innerHTML = `
+      <span class="ticket-result-shown">${shown}</span><span class="ticket-result-sep" aria-hidden="true"> / </span><span class="ticket-result-total">${total}</span>
+    `.trim();
+  }
+
   function renderTickets() {
+    if (!state.token) {
+      showUnauthenticatedState();
+      return;
+    }
     const projectLabel = state.selectedProject || "No project";
     els.ticketHeading.textContent = projectLabel;
-    const countLabel = `${state.tickets.length} ticket${state.tickets.length === 1 ? "" : "s"}`;
-    if (state.filters.parent) {
-      els.ticketCount.innerHTML = `
-        ${escapeHTML(countLabel)}
-        <span class="filter-chip">children of ${escapeHTML(state.filters.parent)}
-          <button type="button" class="filter-chip-clear" data-clear-parent-filter title="Show all tickets" aria-label="Show all tickets">&times;</button>
-        </span>
-      `;
-    } else {
-      els.ticketCount.textContent = countLabel;
-    }
+    renderTicketCount();
     if (!state.selectedProject) {
       els.tickets.innerHTML = "<p class=\"muted\">Choose a configured project or run `tkt init`.</p>";
       return;
@@ -1920,6 +2002,12 @@
         const key = weekToggle.dataset.weekToggle;
         state.expandedWeek = state.expandedWeek === key ? "" : key;
         renderDashboard();
+        return;
+      }
+      const statusButton = event.target.closest("[data-status-filter]");
+      if (statusButton) {
+        event.preventDefault();
+        applyStatusFilter(statusButton.dataset.statusFilter);
         return;
       }
       const navButton = event.target.closest("[data-nav-ticket]");

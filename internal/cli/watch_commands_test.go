@@ -1391,6 +1391,7 @@ func TestSyncCentralStoreGitDoesNotReportFastForwardWhenAlreadyUpToDate(t *testi
 	}
 	runGit(t, store, "add", "-A")
 	runGit(t, store, "commit", "-m", "seed")
+	runGit(t, store, "branch", "-M", "main")
 	runGit(t, store, "push", "-u", "origin", "main")
 
 	if err := os.WriteFile(filepath.Join(ticketDir, "local.md"), []byte("---\nid: local\n---\n# Local\n"), 0644); err != nil {
