@@ -4,6 +4,13 @@
   const SIDEBAR_KEY = "tkt-web-sidebar-collapsed";
   const PANE_WIDTHS_KEY = "tkt-web-pane-widths";
   const PROJECT_KEY = "tkt-web-selected-project";
+  const VIEW_MODES_KEY = "tkt-web-view-modes";
+  const BOARD_COLUMNS = [
+    { status: "open", label: "Open" },
+    { status: "in_progress", label: "In progress" },
+    { status: "needs_testing", label: "Needs testing" },
+    { status: "closed", label: "Closed" }
+  ];
   const PANE_DEFAULTS = { sidebar: 260, list: 420 };
   const PANE_LIMITS = {
     sidebar: { min: 180, max: 420 },
@@ -34,6 +41,9 @@
     editing: false,
     activeView: "tickets",
     mobileView: "list",
+    viewMode: "list",
+    boardDetailOpen: false,
+    boardNotice: "",
     sidebarCollapsed: false,
     sidebarDrawerOpen: false,
     paneWidths: { sidebar: PANE_DEFAULTS.sidebar, list: PANE_DEFAULTS.list },
@@ -69,6 +79,9 @@
     refreshHealth: document.getElementById("refresh-health"),
     ticketHeading: document.getElementById("ticket-heading"),
     ticketCount: document.getElementById("ticket-count"),
+    viewModeList: document.getElementById("view-mode-list"),
+    viewModeBoard: document.getElementById("view-mode-board"),
+    boardBackdrop: document.getElementById("board-detail-backdrop"),
     filters: document.getElementById("filters"),
     search: document.getElementById("search"),
     statusFilter: document.getElementById("status"),
@@ -209,7 +222,7 @@
       els.resizeSidebar.hidden = state.sidebarCollapsed;
     }
 
-    if (state.activeView === "health") {
+    if (state.activeView === "health" || boardModeActive()) {
       if (els.resizeList) els.resizeList.hidden = true;
       if (state.sidebarCollapsed) {
         els.workspace.style.gridTemplateColumns = "minmax(" + PANE_LIMITS.detail.min + "px, 1fr)";
@@ -351,6 +364,58 @@
     return ticket && ticket.type === "epic";
   }
 
+  function storedViewModes() {
+    try {
+      const raw = window.localStorage.getItem(VIEW_MODES_KEY);
+      const parsed = raw ? JSON.parse(raw) : {};
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch (_err) {
+      return {};
+    }
+  }
+
+  function viewModeFor(projectName) {
+    return storedViewModes()[projectName] === "board" ? "board" : "list";
+  }
+
+  function saveViewMode(projectName, mode) {
+    if (!projectName) return;
+    const modes = storedViewModes();
+    modes[projectName] = mode;
+    saveValue(VIEW_MODES_KEY, JSON.stringify(modes));
+  }
+
+  function boardModeActive() {
+    return state.activeView === "tickets" && state.viewMode === "board";
+  }
+
+  function setViewMode(mode) {
+    const next = mode === "board" ? "board" : "list";
+    if (next === state.viewMode) return;
+    state.viewMode = next;
+    state.boardDetailOpen = false;
+    state.boardNotice = "";
+    saveViewMode(state.selectedProject, state.viewMode);
+    syncViewToggle();
+    updateLayoutClasses();
+    renderTickets();
+  }
+
+  function syncViewToggle() {
+    if (els.viewModeList) {
+      els.viewModeList.setAttribute("aria-pressed", String(state.viewMode !== "board"));
+    }
+    if (els.viewModeBoard) {
+      els.viewModeBoard.setAttribute("aria-pressed", String(state.viewMode === "board"));
+    }
+  }
+
+  function closeBoardDetail() {
+    if (!state.boardDetailOpen) return;
+    state.boardDetailOpen = false;
+    updateLayoutClasses();
+  }
+
   function childCountsFor(tickets) {
     const counts = {};
     for (const ticket of tickets) {
@@ -390,6 +455,12 @@
     const showDetail = state.activeView === "tickets" && isMobile() && state.mobileView === "detail" && !!state.selectedTicket;
     els.workspace.classList.toggle("view-detail", showDetail);
     els.workspace.classList.toggle("view-list", state.activeView === "tickets" && !showDetail);
+    els.workspace.classList.toggle("view-board", boardModeActive());
+    const drawerOpen = boardModeActive() && state.boardDetailOpen && !isMobile();
+    els.workspace.classList.toggle("board-detail-open", drawerOpen);
+    if (els.boardBackdrop) {
+      els.boardBackdrop.hidden = !drawerOpen;
+    }
     updateBackToolbar();
     applyPaneSizes();
   }
@@ -603,6 +674,9 @@
       state.overview = session.projects;
       state.projects = session.projects.projects || [];
       state.selectedProject = chooseInitialProject(state.projects, session.projects);
+      state.viewMode = viewModeFor(state.selectedProject);
+      syncViewToggle();
+      updateLayoutClasses();
       setStatus("Connected", "ok");
       renderProjects();
       renderSetup();
@@ -751,6 +825,7 @@
       updateLayoutClasses();
       return;
     }
+    state.boardNotice = "";
     els.tickets.innerHTML = "<p class=\"loading\">Loading tickets...</p>";
     const params = new URLSearchParams();
     if (state.filters.search) params.set("search", state.filters.search);
@@ -793,6 +868,10 @@
     }
     if (!state.selectedProject) {
       els.tickets.innerHTML = "<p class=\"muted\">Choose a configured project or run `tkt init`.</p>";
+      return;
+    }
+    if (boardModeActive()) {
+      els.tickets.innerHTML = boardView();
       return;
     }
     if (!state.tickets.length) {
@@ -841,6 +920,85 @@
     `;
   }
 
+  function boardView() {
+    const columns = BOARD_COLUMNS.map(column => {
+      const tickets = state.tickets.filter(ticket => ticket.status === column.status);
+      return `
+        <section class="board-column" data-status="${column.status}">
+          <header class="board-column-header">
+            <h3>${escapeHTML(column.label)}</h3>
+            <span class="board-count">${tickets.length}</span>
+          </header>
+          <div class="board-column-body">
+            ${tickets.length ? tickets.map(boardCard).join("") : '<p class="board-empty">No tickets</p>'}
+          </div>
+        </section>
+      `;
+    }).join("");
+    return `
+      <div class="ticket-board">
+        <div class="ticket-sort-strip" aria-label="Ticket sorting">
+          <span class="sort-label">Sort</span>
+          ${sortPill("modified", "Date")}
+          ${sortPill("priority", "Priority")}
+          ${sortPill("title", "Title")}
+          ${sortPill("type", "Type")}
+        </div>
+        ${state.boardNotice ? `<div class="board-notice notice warning">${escapeHTML(state.boardNotice)}</div>` : ""}
+        <div class="board-columns">${columns}</div>
+      </div>
+    `;
+  }
+
+  function boardCard(ticket) {
+    const selected = ticket.id === state.selectedTicket;
+    const epic = isEpic(ticket);
+    return `
+      <article class="board-card${selected ? " selected" : ""}${epic ? " type-epic" : ""}" draggable="true" data-ticket="${escapeHTML(ticket.id)}" tabindex="0" aria-current="${selected}">
+        <div class="board-card-title-row">
+          ${epic ? '<span class="type-mark type-mark-epic">Epic</span>' : ""}
+          <span class="row-title">${escapeHTML(ticket.title || "(untitled)")}</span>
+        </div>
+        <span class="board-card-id">${escapeHTML(ticket.id)}</span>
+        <div class="board-card-foot">
+          <span class="priority-token">p${Number(ticket.priority || 0)}</span>
+          <span class="ticket-row-date">${escapeHTML(formatTicketDate(ticket.modified))}</span>
+        </div>
+      </article>
+    `;
+  }
+
+  async function moveTicketStatus(ticketID, status) {
+    const ticket = state.tickets.find(item => item.id === ticketID);
+    if (!ticket || !status || ticket.status === status) return;
+    try {
+      const detail = await mutate(
+        `/api/projects/${encodeURIComponent(state.selectedProject)}/tickets/${encodeURIComponent(ticketID)}`,
+        { source: "web", revision: ticket.revision, fields: { status } },
+        { method: "PATCH" }
+      );
+      state.boardNotice = "";
+      ticket.status = detail.status;
+      ticket.revision = detail.revision;
+      if (detail.revision && detail.revision.mod_time) {
+        ticket.modified = detail.revision.mod_time;
+      }
+      if (state.detail && state.detail.id === ticketID) {
+        state.detail = detail;
+        renderDetail();
+      }
+      renderTickets();
+    } catch (err) {
+      if (err.code === "stale_revision") {
+        await loadTickets();
+        state.boardNotice = "This ticket changed on disk, so the move was not applied. The board has been refreshed; try again.";
+      } else {
+        state.boardNotice = err.message || "Could not update ticket status.";
+      }
+      renderTickets();
+    }
+  }
+
   async function loadDetail(ticketID, options) {
     options = options || {};
     if (!state.selectedProject || !ticketID) return;
@@ -852,6 +1010,9 @@
     state.editing = false;
     renderTickets();
     scrollTicketIntoView();
+    if (boardModeActive() && !isMobile() && !preserveMobileView) {
+      state.boardDetailOpen = true;
+    }
     if (!preserveMobileView && isMobile()) {
       setMobileView("detail");
     } else {
@@ -1192,6 +1353,79 @@
     });
   }
 
+  let draggedTicketID = "";
+
+  function clearDropTargets() {
+    els.tickets.querySelectorAll(".board-column.drag-over").forEach(column => {
+      column.classList.remove("drag-over");
+    });
+  }
+
+  els.tickets.addEventListener("dragstart", event => {
+    const card = event.target.closest(".board-card");
+    if (!card) return;
+    draggedTicketID = card.dataset.ticket || "";
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", draggedTicketID);
+    }
+    card.classList.add("dragging");
+  });
+
+  els.tickets.addEventListener("dragend", event => {
+    const card = event.target.closest(".board-card");
+    if (card) card.classList.remove("dragging");
+    draggedTicketID = "";
+    clearDropTargets();
+  });
+
+  els.tickets.addEventListener("dragover", event => {
+    if (!draggedTicketID) return;
+    const column = event.target.closest(".board-column");
+    if (!column) return;
+    event.preventDefault();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "move";
+    }
+    if (!column.classList.contains("drag-over")) {
+      clearDropTargets();
+      column.classList.add("drag-over");
+    }
+  });
+
+  els.tickets.addEventListener("dragleave", event => {
+    const column = event.target.closest(".board-column");
+    if (!column) return;
+    if (event.relatedTarget && column.contains(event.relatedTarget)) return;
+    column.classList.remove("drag-over");
+  });
+
+  els.tickets.addEventListener("drop", event => {
+    if (!draggedTicketID) return;
+    const column = event.target.closest(".board-column");
+    if (!column) return;
+    event.preventDefault();
+    const ticketID = draggedTicketID;
+    draggedTicketID = "";
+    clearDropTargets();
+    moveTicketStatus(ticketID, column.dataset.status || "");
+  });
+
+  if (els.viewModeList) {
+    els.viewModeList.addEventListener("click", () => setViewMode("list"));
+  }
+  if (els.viewModeBoard) {
+    els.viewModeBoard.addEventListener("click", () => setViewMode("board"));
+  }
+  if (els.boardBackdrop) {
+    els.boardBackdrop.addEventListener("click", () => closeBoardDetail());
+  }
+  document.addEventListener("keydown", event => {
+    if (event.key === "Escape" && state.boardDetailOpen) {
+      closeBoardDetail();
+    }
+  });
+
   els.projects.addEventListener("click", event => {
     const button = event.target.closest("[data-project]");
     if (!button) return;
@@ -1202,6 +1436,10 @@
     state.detail = null;
     state.editing = false;
     state.editMessage = "";
+    state.viewMode = viewModeFor(state.selectedProject);
+    state.boardDetailOpen = false;
+    state.boardNotice = "";
+    syncViewToggle();
     setMobileView("list");
     setSidebarCollapsed(true);
     renderProjects();

@@ -45,6 +45,10 @@
             <h2 id="ticket-heading">Tickets</h2>
             <p id="ticket-count" class="muted">No project selected</p>
           </div>
+          <div class="view-toggle" role="group" aria-label="Ticket view mode">
+            <button id="view-mode-list" class="view-toggle-button" type="button" aria-pressed="true">List</button>
+            <button id="view-mode-board" class="view-toggle-button" type="button" aria-pressed="false">Board</button>
+          </div>
         </div>
         <form id="filters" class="filters toolbar">
           <input id="search" type="search" placeholder="Search id or title" autocomplete="off" aria-label="Search tickets">
@@ -69,6 +73,7 @@
         </div>
       </section>
       <div id="resize-list" class="resize-handle" role="separator" aria-orientation="vertical" aria-label="Resize ticket list pane" tabindex="-1"></div>
+      <button id="board-detail-backdrop" class="board-detail-backdrop" type="button" aria-label="Close ticket detail" hidden></button>
       <section id="detail-column" class="detail-column column-pane" aria-label="Ticket detail">
         <div id="detail-toolbar" class="panel-header detail-toolbar" hidden>
           <button id="detail-back" class="back-button" type="button">Back</button>

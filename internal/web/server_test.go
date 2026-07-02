@@ -317,6 +317,45 @@ func TestEmbeddedAppIncludesDiscoveryControls(t *testing.T) {
 	}
 }
 
+func TestEmbeddedAppIncludesBoardView(t *testing.T) {
+	index, err := assets.ReadFile("assets/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	appJS, err := assets.ReadFile("assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	styles, err := assets.ReadFile("assets/styles.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	combined := string(index) + "\n" + string(appJS) + "\n" + string(styles)
+	for _, required := range []string{
+		"view-mode-list",
+		"view-mode-board",
+		"view-toggle",
+		"ticket-board",
+		"board-column",
+		"board-card",
+		"data-status",
+		"draggable",
+		"dragstart",
+		"dragover",
+		"moveTicketStatus",
+		"stale_revision",
+		"board-detail-backdrop",
+		"board-detail-open",
+		"view-board",
+		"tkt-web-view-modes",
+		"--semantic-board-",
+	} {
+		if !strings.Contains(combined, required) {
+			t.Fatalf("embedded app missing board marker %q", required)
+		}
+	}
+}
+
 func TestEmbeddedAppIncludesMarkdownRendering(t *testing.T) {
 	index, err := assets.ReadFile("assets/index.html")
 	if err != nil {
