@@ -123,7 +123,7 @@
   --semantic-board-toggle-active-bg: var(--raw-neutral-0);
   --semantic-board-toggle-active-text: var(--raw-neutral-900);
 
-  /* Insights / dashboard */
+  /* Insights / analytics */
   --semantic-insight-card-bg: var(--raw-neutral-0);
   --semantic-insight-card-border: var(--raw-neutral-150);
   --semantic-insight-value-text: var(--raw-neutral-900);
@@ -608,7 +608,10 @@ body.is-resizing * {
   display: none;
 }
 
-.workspace.view-tickets .health-column {
+.workspace.view-tickets .health-column,
+.workspace.view-tickets .dashboard-column,
+.health-column[hidden],
+.dashboard-column[hidden] {
   display: none;
 }
 
@@ -713,7 +716,6 @@ body.is-resizing * {
 .view-toggle {
   display: flex;
   gap: 2px;
-  margin-left: auto;
   flex-shrink: 0;
   padding: 2px;
   border-radius: var(--radius-md);
@@ -938,7 +940,7 @@ body.is-resizing * {
   color: var(--semantic-content-text-strong);
 }
 
-/* ── Dashboard ── */
+/* ── Analytics ── */
 
 .dashboard-panel {
   display: grid;
@@ -1060,11 +1062,6 @@ body.is-resizing * {
   font-variant-numeric: tabular-nums;
 }
 
-.queue-list {
-  display: grid;
-  gap: 0;
-}
-
 .queue-item {
   display: grid;
   gap: 2px;
@@ -1086,12 +1083,6 @@ body.is-resizing * {
 .queue-item:hover {
   background: var(--semantic-insight-row-hover-bg);
   border-color: var(--semantic-content-border);
-}
-
-.queue-blockers {
-  color: var(--semantic-insight-blocker-text);
-  font-size: var(--text-meta);
-  font-family: var(--font-mono);
 }
 
 .weeks-toggle {
@@ -1154,58 +1145,22 @@ body.is-resizing * {
   padding-left: var(--space-4);
 }
 
-.epic-rows {
-  display: grid;
-  gap: var(--space-3);
-}
-
-.epic-row {
+.epic-progress-summary {
   display: grid;
   gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--semantic-insight-card-border);
-  border-radius: var(--radius-lg);
-  background: var(--semantic-insight-card-bg);
+  margin-top: var(--space-2);
 }
 
-.epic-row-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-
-.epic-row-head .small-button {
+.epic-progress-summary.compact {
+  gap: var(--space-1);
   margin-top: 0;
-  flex-shrink: 0;
-}
-
-.epic-link {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-  min-height: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  text-align: left;
-  font-weight: 400;
-}
-
-.epic-link:hover {
-  background: transparent;
-  border-color: transparent;
-}
-
-.epic-link:hover .row-title {
-  color: var(--semantic-content-link-text);
 }
 
 .epic-progress {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
 }
 
 .epic-progress-count {
@@ -1215,7 +1170,16 @@ body.is-resizing * {
 }
 
 .epic-no-children {
-  margin: 0;
+  margin: var(--space-2) 0 0;
+}
+
+.epic-status-row {
+  gap: var(--space-1);
+}
+
+.epic-children-button {
+  min-height: 24px;
+  padding: 0 var(--space-2);
 }
 
 /* ── Project list ── */
@@ -1555,6 +1519,10 @@ body.is-resizing * {
   align-items: center;
   flex-wrap: wrap;
   gap: var(--space-2);
+}
+
+.board-card .epic-progress {
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 
 .board-card-foot {

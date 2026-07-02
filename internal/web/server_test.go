@@ -335,6 +335,7 @@ func TestEmbeddedAppIncludesBoardView(t *testing.T) {
 		"view-mode-list",
 		"view-mode-board",
 		"view-toggle",
+		".view-toggle {",
 		"ticket-board",
 		"board-column",
 		"board-card",
@@ -345,6 +346,11 @@ func TestEmbeddedAppIncludesBoardView(t *testing.T) {
 		"moveTicketStatus",
 		"stale_revision",
 		"state.filters.status && !boardModeActive()",
+		"ticketUniverse",
+		"epicProgressIndex",
+		"epicProgressSummary",
+		"epic-progress-summary",
+		"data-parent-filter",
 		"board-detail-backdrop",
 		"board-detail-open",
 		"view-board",
@@ -355,9 +361,12 @@ func TestEmbeddedAppIncludesBoardView(t *testing.T) {
 			t.Fatalf("embedded app missing board marker %q", required)
 		}
 	}
+	if strings.Contains(string(styles), "margin-left: auto;") {
+		t.Fatal("view toggle should stay near the ticket heading instead of auto-aligning to the far edge")
+	}
 }
 
-func TestEmbeddedAppIncludesDashboardView(t *testing.T) {
+func TestEmbeddedAppIncludesAnalyticsView(t *testing.T) {
 	index, err := assets.ReadFile("assets/index.html")
 	if err != nil {
 		t.Fatal(err)
@@ -373,31 +382,35 @@ func TestEmbeddedAppIncludesDashboardView(t *testing.T) {
 	combined := string(index) + "\n" + string(appJS) + "\n" + string(styles)
 	for _, required := range []string{
 		"nav-dashboard",
+		"Analytics",
+		"Project analytics",
+		"Project overview and throughput",
+		"Refresh analytics",
 		"dashboard-column",
+		".workspace.view-tickets .dashboard-column",
+		".dashboard-column[hidden]",
 		"dashboard-panel",
 		"refresh-dashboard",
 		"view-dashboard",
 		"/insights/stats",
 		"/insights/timeline",
-		"/insights/epics",
 		"ticket_ids",
-		"ready=true",
-		"blocked=true",
 		"loadDashboard",
+		"preserveScroll",
 		"stat-card",
 		"queue-item",
-		"queue-blockers",
 		"timeline-row",
 		"data-week-toggle",
 		"data-weeks",
-		"epic-row",
-		"data-parent-filter",
 		"insight-bar-fill",
 		"--semantic-insight-",
 	} {
 		if !strings.Contains(combined, required) {
-			t.Fatalf("embedded app missing dashboard marker %q", required)
+			t.Fatalf("embedded app missing analytics marker %q", required)
 		}
+	}
+	if strings.Contains(string(appJS), "/insights/epics") {
+		t.Fatal("analytics view should not fetch the epic progress endpoint")
 	}
 }
 

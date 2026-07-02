@@ -42,6 +42,7 @@
     dashboardProject: "",
     timelineWeeks: 8,
     expandedWeek: "",
+    ticketUniverse: [],
     editMessage: "",
     editing: false,
     activeView: "tickets",
@@ -426,13 +427,63 @@
     updateLayoutClasses();
   }
 
-  function childCountsFor(tickets) {
+  function epicProgressIndex(tickets) {
     const counts = {};
     for (const ticket of tickets) {
       if (!ticket.parent) continue;
-      counts[ticket.parent] = (counts[ticket.parent] || 0) + 1;
+      if (!counts[ticket.parent]) {
+        counts[ticket.parent] = {
+          totalChildren: 0,
+          closedChildren: 0,
+          childrenByStatus: {}
+        };
+      }
+      counts[ticket.parent].totalChildren++;
+      counts[ticket.parent].childrenByStatus[ticket.status] = (counts[ticket.parent].childrenByStatus[ticket.status] || 0) + 1;
+      if (ticket.status === "closed") {
+        counts[ticket.parent].closedChildren++;
+      }
     }
     return counts;
+  }
+
+  function epicProgressFor(ticket, progressIndex) {
+    const progress = progressIndex[ticket.id] || {};
+    return {
+      id: ticket.id,
+      totalChildren: Number(progress.totalChildren || progress.total_children || 0),
+      closedChildren: Number(progress.closedChildren || progress.closed_children || 0),
+      childrenByStatus: progress.childrenByStatus || progress.children_by_status || {}
+    };
+  }
+
+  function epicProgressSummary(ticket, progressIndex, options) {
+    const config = options || {};
+    const progress = epicProgressFor(ticket, progressIndex);
+    const total = progress.totalChildren;
+    const closed = progress.closedChildren;
+    if (!total) {
+      return config.compact ? "" : '<p class="muted epic-no-children">No children yet.</p>';
+    }
+    const pct = Math.round((closed / total) * 100);
+    const statusCounts = progress.childrenByStatus || {};
+    const chips = config.compact ? "" : Object.keys(STATUS_LABELS)
+      .filter(status => statusCounts[status])
+      .map(status => badge(`${statusCounts[status]} ${STATUS_LABELS[status].toLowerCase()}`, "status-" + status))
+      .join("");
+    const action = config.action
+      ? `<button class="small-button epic-children-button" type="button" data-parent-filter="${escapeHTML(ticket.id)}">Children</button>`
+      : "";
+    return `
+      <div class="epic-progress-summary${config.compact ? " compact" : ""}">
+        <div class="epic-progress">
+          <span class="insight-bar-track"><span class="insight-bar-fill" data-bar-width="${pct}"></span></span>
+          <span class="epic-progress-count">${closed}/${total}</span>
+          ${action}
+        </div>
+        ${chips ? `<div class="badge-row epic-status-row">${chips}</div>` : ""}
+      </div>
+    `;
   }
 
   function setActiveView(view) {
@@ -810,7 +861,7 @@
     return "warn";
   }
 
-  /* ── Dashboard ── */
+  /* ── Analytics ── */
 
   const TIMELINE_WEEK_OPTIONS = [4, 8, 12, 26];
   const STATUS_LABELS = {
@@ -820,29 +871,53 @@
     closed: "Closed"
   };
 
-  async function loadDashboard() {
+  function dashboardScrollSnapshot(shouldPreserve) {
+    if (!shouldPreserve || !els.dashboard) return null;
+    const scrollParent = els.dashboard.closest(".panel-scroll");
+    return {
+      windowX: window.scrollX,
+      windowY: window.scrollY,
+      scrollParent,
+      scrollTop: scrollParent ? scrollParent.scrollTop : 0,
+      scrollLeft: scrollParent ? scrollParent.scrollLeft : 0
+    };
+  }
+
+  function restoreDashboardScroll(snapshot) {
+    if (!snapshot) return;
+    window.requestAnimationFrame(() => {
+      if (snapshot.scrollParent) {
+        snapshot.scrollParent.scrollTop = snapshot.scrollTop;
+        snapshot.scrollParent.scrollLeft = snapshot.scrollLeft;
+      }
+      window.scrollTo(snapshot.windowX, snapshot.windowY);
+    });
+  }
+
+  async function loadDashboard(options) {
+    const config = options || {};
     if (!els.dashboard) return;
+    const scrollSnapshot = dashboardScrollSnapshot(config.preserveScroll);
     state.dashboardError = "";
     state.expandedWeek = "";
     if (els.dashboardHeading) {
-      els.dashboardHeading.textContent = state.selectedProject || "Dashboard";
+      els.dashboardHeading.textContent = state.selectedProject || "Analytics";
     }
     if (!state.selectedProject) {
       state.dashboard = null;
       state.dashboardProject = "";
-      els.dashboard.innerHTML = "<p class=\"muted\">Choose a configured project to see its dashboard.</p>";
+      els.dashboard.innerHTML = "<p class=\"muted\">Choose a configured project to see its analytics.</p>";
       return;
     }
-    els.dashboard.innerHTML = "<p class=\"loading\">Loading dashboard...</p>";
+    if (!config.preserveScroll || !state.dashboard) {
+      els.dashboard.innerHTML = "<p class=\"loading\">Loading analytics...</p>";
+    }
     const project = state.selectedProject;
     const base = `/api/projects/${encodeURIComponent(project)}`;
     try {
-      const [stats, timeline, epics, ready, blocked, all] = await Promise.all([
+      const [stats, timeline, all] = await Promise.all([
         api(`${base}/insights/stats`),
         api(`${base}/insights/timeline?weeks=${state.timelineWeeks}`),
-        api(`${base}/insights/epics`),
-        api(`${base}/tickets?ready=true&sort=priority`),
-        api(`${base}/tickets?blocked=true&sort=priority`),
         api(`${base}/tickets`)
       ]);
       if (state.selectedProject !== project) return;
@@ -853,26 +928,25 @@
       state.dashboard = {
         stats,
         timeline: timeline.weeks || [],
-        epics: epics.epics || [],
-        ready: ready.items || [],
-        blocked: blocked.items || [],
         byID
       };
       state.dashboardProject = project;
       renderDashboard();
+      restoreDashboardScroll(scrollSnapshot);
     } catch (err) {
       if (state.selectedProject !== project) return;
       state.dashboard = null;
       state.dashboardProject = "";
-      state.dashboardError = err.message || "Dashboard unavailable.";
+      state.dashboardError = err.message || "Analytics unavailable.";
       renderDashboard();
+      restoreDashboardScroll(scrollSnapshot);
     }
   }
 
   function renderDashboard() {
     if (!els.dashboard) return;
     if (els.dashboardHeading) {
-      els.dashboardHeading.textContent = state.selectedProject || "Dashboard";
+      els.dashboardHeading.textContent = state.selectedProject || "Analytics";
     }
     if (state.dashboardError) {
       els.dashboard.innerHTML = notice(escapeHTML(state.dashboardError), "error");
@@ -885,16 +959,14 @@
     }
     els.dashboard.innerHTML = `
       ${overviewSection(data.stats)}
-      ${queueSection("Ready to start", data.ready, "ready")}
-      ${queueSection("Blocked", data.blocked, "blocked")}
       ${timelineSection(data.timeline)}
-      ${epicsSection(data.epics)}
     `;
-    applyBarWidths();
+    applyBarWidths(els.dashboard);
   }
 
-  function applyBarWidths() {
-    els.dashboard.querySelectorAll("[data-bar-width]").forEach(el => {
+  function applyBarWidths(root) {
+    const scope = root || document;
+    scope.querySelectorAll("[data-bar-width]").forEach(el => {
       el.style.width = el.dataset.barWidth + "%";
     });
   }
@@ -962,53 +1034,6 @@
     `;
   }
 
-  function queueSection(title, items, kind) {
-    let body;
-    if (!items.length) {
-      body = kind === "ready"
-        ? '<p class="muted">Nothing is ready to start.</p>'
-        : '<p class="muted">No blocked tickets.</p>';
-    } else {
-      body = `<div class="queue-list">${items.map(item => queueItem(item, kind)).join("")}</div>`;
-    }
-    return `
-      <section class="insight-section">
-        <div class="insight-section-head">
-          <h3 class="section-label">${escapeHTML(title)}</h3>
-          <span class="insight-section-count">${items.length}</span>
-        </div>
-        ${body}
-      </section>
-    `;
-  }
-
-  function queueItem(item, kind) {
-    const epic = isEpic(item);
-    const meta = [item.id, item.type, "p" + Number(item.priority || 0)].filter(Boolean).join(" · ");
-    const blockers = kind === "blocked" ? blockingDeps(item) : [];
-    const blockerHTML = blockers.length
-      ? `<span class="queue-blockers">blocked by ${blockers.map(dep => escapeHTML(dep)).join(", ")}</span>`
-      : "";
-    return `
-      <button class="queue-item" type="button" data-nav-ticket="${escapeHTML(item.id)}">
-        <span class="ticket-row-top">
-          ${epic ? '<span class="type-mark type-mark-epic">Epic</span>' : ""}
-          <span class="row-title">${escapeHTML(item.title || "(untitled)")}</span>
-        </span>
-        <span class="row-meta">${escapeHTML(meta)}</span>
-        ${blockerHTML}
-      </button>
-    `;
-  }
-
-  function blockingDeps(item) {
-    const byID = state.dashboard ? state.dashboard.byID : {};
-    return (item.deps || []).filter(dep => {
-      const target = byID[dep];
-      return !target || target.status !== "closed";
-    });
-  }
-
   function formatWeekLabel(key) {
     const date = new Date(key + "T00:00:00Z");
     if (Number.isNaN(date.getTime())) return key;
@@ -1063,56 +1088,6 @@
       </button>
     `).join("");
     return `<div class="timeline-week-tickets">${items}</div>`;
-  }
-
-  function epicsSection(epics) {
-    let body;
-    if (!epics.length) {
-      body = '<p class="muted">No epics in this project.</p>';
-    } else {
-      body = `<div class="epic-rows">${epics.map(epicRow).join("")}</div>`;
-    }
-    return `
-      <section class="insight-section">
-        <div class="insight-section-head">
-          <h3 class="section-label">Epics</h3>
-          <span class="insight-section-count">${epics.length}</span>
-        </div>
-        ${body}
-      </section>
-    `;
-  }
-
-  function epicRow(epic) {
-    const total = Number(epic.total_children || 0);
-    const closed = Number(epic.closed_children || 0);
-    const pct = total ? Math.round((closed / total) * 100) : 0;
-    const statusCounts = epic.children_by_status || {};
-    const chips = Object.keys(STATUS_LABELS)
-      .filter(status => statusCounts[status])
-      .map(status => badge(`${statusCounts[status]} ${STATUS_LABELS[status].toLowerCase()}`, "status-" + status))
-      .join("");
-    const progress = total
-      ? `
-        <div class="epic-progress">
-          <span class="insight-bar-track"><span class="insight-bar-fill" data-bar-width="${pct}"></span></span>
-          <span class="epic-progress-count">${closed}/${total}</span>
-        </div>
-      `
-      : '<p class="muted epic-no-children">No children yet.</p>';
-    return `
-      <div class="epic-row">
-        <div class="epic-row-head">
-          <button class="epic-link" type="button" data-nav-ticket="${escapeHTML(epic.id)}">
-            <span class="row-title">${escapeHTML(epic.title || "(untitled)")}</span>
-            <span class="row-meta">${escapeHTML(epic.id)} · ${escapeHTML(epic.status || "")}</span>
-          </button>
-          ${total ? `<button class="small-button" type="button" data-parent-filter="${escapeHTML(epic.id)}">Children</button>` : ""}
-        </div>
-        ${progress}
-        ${chips ? `<div class="badge-row">${chips}</div>` : ""}
-      </div>
-    `;
   }
 
   async function openTicketFromDashboard(ticketID) {
@@ -1170,8 +1145,14 @@
     if (state.filters.status && !boardModeActive()) params.set("status", state.filters.status);
     if (state.filters.type) params.set("type", state.filters.type);
     try {
-      const list = await api(`/api/projects/${encodeURIComponent(state.selectedProject)}/tickets?${params}`);
+      const ticketPath = `/api/projects/${encodeURIComponent(state.selectedProject)}/tickets`;
+      const query = params.toString();
+      const [list, all] = await Promise.all([
+        api(query ? `${ticketPath}?${query}` : ticketPath),
+        api(ticketPath)
+      ]);
       state.tickets = list.items || [];
+      state.ticketUniverse = all.items || state.tickets;
       renderTickets();
       if (state.selectedTicket && state.tickets.some(t => t.id === state.selectedTicket)) {
         await loadDetail(state.selectedTicket, { preserveMobileView: true });
@@ -1208,13 +1189,14 @@
     }
     if (boardModeActive()) {
       els.tickets.innerHTML = boardView();
+      applyBarWidths(els.tickets);
       return;
     }
     if (!state.tickets.length) {
       els.tickets.innerHTML = "<p class=\"muted\">No tickets match the current filters.</p>";
       return;
     }
-    const childCounts = childCountsFor(state.tickets);
+    const epicProgress = epicProgressIndex(state.ticketUniverse.length ? state.ticketUniverse : state.tickets);
     els.tickets.innerHTML = `
       <div class="ticket-inbox">
         <div class="ticket-sort-strip" aria-label="Ticket sorting">
@@ -1228,7 +1210,8 @@
           ${state.tickets.map(ticket => {
             const selected = ticket.id === state.selectedTicket;
             const epic = isEpic(ticket);
-            const childCount = epic ? childCounts[ticket.id] || 0 : 0;
+            const progress = epic ? epicProgressFor(ticket, epicProgress) : null;
+            const childCount = progress ? progress.totalChildren : 0;
             const meta = [
               ticket.id,
               ticket.status,
@@ -1243,6 +1226,7 @@
                     <span class="row-title">${escapeHTML(ticket.title || "(untitled)")}</span>
                   </div>
                   <div class="row-meta">${escapeHTML(meta)}</div>
+                  ${epic ? epicProgressSummary(ticket, epicProgress, { action: true }) : ""}
                 </div>
                 <div class="ticket-row-aside">
                   <span class="priority-token">p${Number(ticket.priority || 0)}</span>
@@ -1254,9 +1238,11 @@
         </div>
       </div>
     `;
+    applyBarWidths(els.tickets);
   }
 
   function boardView() {
+    const epicProgress = epicProgressIndex(state.ticketUniverse.length ? state.ticketUniverse : state.tickets);
     const columns = BOARD_COLUMNS.map(column => {
       const tickets = state.tickets.filter(ticket => ticket.status === column.status);
       return `
@@ -1266,7 +1252,7 @@
             <span class="board-count">${tickets.length}</span>
           </header>
           <div class="board-column-body">
-            ${tickets.length ? tickets.map(boardCard).join("") : '<p class="board-empty">No tickets</p>'}
+            ${tickets.length ? tickets.map(ticket => boardCard(ticket, epicProgress)).join("") : '<p class="board-empty">No tickets</p>'}
           </div>
         </section>
       `;
@@ -1286,7 +1272,7 @@
     `;
   }
 
-  function boardCard(ticket) {
+  function boardCard(ticket, epicProgress) {
     const selected = ticket.id === state.selectedTicket;
     const epic = isEpic(ticket);
     return `
@@ -1296,6 +1282,7 @@
           <span class="row-title">${escapeHTML(ticket.title || "(untitled)")}</span>
         </div>
         <span class="board-card-id">${escapeHTML(ticket.id)}</span>
+        ${epic ? epicProgressSummary(ticket, epicProgress, { compact: true }) : ""}
         <div class="board-card-foot">
           <span class="priority-token">p${Number(ticket.priority || 0)}</span>
           <span class="ticket-row-date">${escapeHTML(formatTicketDate(ticket.modified))}</span>
@@ -1322,6 +1309,14 @@
       if (state.detail && state.detail.id === ticketID) {
         state.detail = detail;
         renderDetail();
+      }
+      const universeTicket = state.ticketUniverse.find(item => item.id === ticketID);
+      if (universeTicket) {
+        universeTicket.status = detail.status;
+        universeTicket.revision = detail.revision;
+        if (detail.revision && detail.revision.mod_time) {
+          universeTicket.modified = detail.revision.mod_time;
+        }
       }
       renderTickets();
     } catch (err) {
@@ -1410,10 +1405,12 @@
           ${detail.assignee ? badge(detail.assignee) : ""}
           ${epic && detail.children && detail.children.length ? badge(detail.children.length + " children", "child-count") : ""}
         </div>
+        ${epic ? epicProgressSummary(detail, epicProgressIndex(detail.children || []), {}) : ""}
       </header>
       ${state.editMessage ? notice(escapeHTML(state.editMessage), state.editMessage.indexOf("saved") >= 0 ? "" : "warning") : ""}
       ${relationshipsView(detail)}
     `;
+    applyBarWidths(els.detail);
   }
 
   function relationshipsView(detail) {
@@ -1673,6 +1670,12 @@
         loadTickets();
         return;
       }
+      const childrenButton = event.target.closest("[data-parent-filter]");
+      if (childrenButton) {
+        event.preventDefault();
+        applyParentFilter(childrenButton.dataset.parentFilter);
+        return;
+      }
       const row = event.target.closest("[data-ticket]");
       if (!row) return;
       state.editMessage = "";
@@ -1681,6 +1684,7 @@
 
     els.ticketColumn.addEventListener("keydown", event => {
       if (event.key !== "Enter" && event.key !== " ") return;
+      if (event.target.closest("[data-parent-filter]")) return;
       const row = event.target.closest("[data-ticket]");
       if (!row) return;
       event.preventDefault();
@@ -1770,6 +1774,7 @@
     resetTicketHistory();
     state.selectedTicket = "";
     state.detail = null;
+    state.ticketUniverse = [];
     state.editing = false;
     state.editMessage = "";
     state.viewMode = viewModeFor(state.selectedProject);
@@ -1903,8 +1908,11 @@
     els.dashboard.addEventListener("click", event => {
       const weeksButton = event.target.closest("[data-weeks]");
       if (weeksButton) {
-        state.timelineWeeks = Number(weeksButton.dataset.weeks) || 8;
-        loadDashboard();
+        event.preventDefault();
+        const weeks = Number(weeksButton.dataset.weeks) || 8;
+        if (weeks === state.timelineWeeks) return;
+        state.timelineWeeks = weeks;
+        loadDashboard({ preserveScroll: true });
         return;
       }
       const weekToggle = event.target.closest("[data-week-toggle]");
@@ -1912,11 +1920,6 @@
         const key = weekToggle.dataset.weekToggle;
         state.expandedWeek = state.expandedWeek === key ? "" : key;
         renderDashboard();
-        return;
-      }
-      const childrenButton = event.target.closest("[data-parent-filter]");
-      if (childrenButton) {
-        applyParentFilter(childrenButton.dataset.parentFilter);
         return;
       }
       const navButton = event.target.closest("[data-nav-ticket]");
