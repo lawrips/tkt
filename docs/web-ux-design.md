@@ -46,8 +46,8 @@ The first screen is a compact workbench:
 
 - Ticket list
   - Search input.
-  - Filter controls for status, type, priority, assignee, tag, blocked, ready,
-    and parent.
+  - Filter controls for status, type, priority, assignee, tag, and parent.
+  - Future queue filters for derived states such as blocked and ready.
   - Stable compact rows with status, type, priority, title, and relevant badges.
 
 - Ticket detail
@@ -100,7 +100,7 @@ Filters:
 - Assignee.
 - Tag.
 - Parent.
-- Ready and blocked.
+- Queue filters for ready and blocked can be added when they carry enough day-to-day value.
 - Sort by id, created, modified, priority, title.
 
 Rows should not resize unpredictably on hover or status changes.
