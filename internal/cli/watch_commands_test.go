@@ -1018,6 +1018,107 @@ func TestWatchGlobalSkipsDisabledProjects(t *testing.T) {
 	})
 }
 
+func TestWatchEmptyRepoDoesNotWarn(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	withWorkspaceNoTickets(t, func(_ string) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+
+		dir := filepath.Join(t.TempDir(), "empty-repo")
+		if err := os.MkdirAll(filepath.Join(dir, ".tickets"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		runGit := func(args ...string) {
+			t.Helper()
+			cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git %v failed: %v\n%s", args, err, string(out))
+			}
+		}
+		runGit("init")
+		runGit("config", "user.email", "tkt@example.com")
+		runGit("config", "user.name", "tkt")
+
+		cfg := project.Config{
+			Projects: map[string]project.ProjectConfig{
+				"empty": {
+					Path:         project.DetectProjectPath(dir),
+					Store:        "local",
+					AutoLink:     true,
+					AutoClose:    true,
+					RegisteredAt: time.Now().UTC().Add(-5 * time.Minute).Format(time.RFC3339),
+				},
+			},
+		}
+		if err := project.Save(cfg); err != nil {
+			t.Fatalf("save config: %v", err)
+		}
+
+		_, stderr, err := runCmd(t, "", "serve", "run", "--once")
+		if err != nil {
+			t.Fatalf("serve run --once: %v", err)
+		}
+		if strings.Contains(stderr, "git log failed") || strings.Contains(stderr, "git rev-list failed") {
+			t.Fatalf("expected empty repo to be a quiet no-op, got stderr:\n%s", stderr)
+		}
+	})
+}
+
+func TestWatchWarningTrackerSuppressesRepeatedUnchangedWarnings(t *testing.T) {
+	tracker := newWatchWarningTracker()
+	msg := "outdoors: no git repository at /missing"
+
+	got := tracker.record([]string{msg})
+	if len(got) != 1 || got[0] != msg {
+		t.Fatalf("expected first warning to emit, got %v", got)
+	}
+
+	got = tracker.record([]string{msg})
+	if len(got) != 0 {
+		t.Fatalf("expected repeated warning to be suppressed, got %v", got)
+	}
+
+	changed := "outdoors: git log failed at /missing"
+	got = tracker.record([]string{changed})
+	if len(got) != 1 || got[0] != changed {
+		t.Fatalf("expected changed warning to emit, got %v", got)
+	}
+}
+
+func TestWatchWarningTrackerEmitsAgainAfterClear(t *testing.T) {
+	tracker := newWatchWarningTracker()
+	msg := "convo: git log failed at /repo"
+
+	_ = tracker.record([]string{msg})
+	_ = tracker.record(nil)
+
+	got := tracker.record([]string{msg})
+	if len(got) != 1 || got[0] != msg {
+		t.Fatalf("expected warning to emit again after clearing, got %v", got)
+	}
+}
+
+func TestWatchWarningTrackerHandlesMultipleWarningsForOneProject(t *testing.T) {
+	tracker := newWatchWarningTracker()
+	warnings := []string{
+		"demo: diff-tree abc1234 failed",
+		"demo: auto-close c-one failed",
+	}
+
+	got := tracker.record(warnings)
+	if len(got) != len(warnings) {
+		t.Fatalf("expected both initial warnings, got %v", got)
+	}
+
+	got = tracker.record(warnings)
+	if len(got) != 0 {
+		t.Fatalf("expected both unchanged warnings to be suppressed, got %v", got)
+	}
+}
+
 func TestWatchGlobalJournalsRefsAndAutoCloses(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")

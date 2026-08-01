@@ -78,6 +78,7 @@ func runWatchForeground(ctx context, args []string, cmdName string) error {
 	}
 
 	centralWarnings := newCentralSyncWarningTracker()
+	watchWarnings := newWatchWarningTracker()
 
 	cycle := func() error {
 		if noWatcher {
@@ -120,6 +121,7 @@ func runWatchForeground(ctx context, args []string, cmdName string) error {
 				}
 			}
 		}
+		allWarnings = watchWarnings.record(allWarnings)
 		if ctx.json {
 			return emitJSON(ctx, map[string]any{
 				"entries_added":  totalAppended,
@@ -587,6 +589,14 @@ func loadJournalState(path string) (map[string]struct{}, string, error) {
 }
 
 func collectCommitsForWatch(repoPath string, lastSHA string, registeredAt string) ([]gitCommit, error) {
+	hasCommits, err := repoHasCommits(repoPath)
+	if err != nil {
+		return nil, err
+	}
+	if !hasCommits {
+		return nil, nil
+	}
+
 	args := []string{"-C", repoPath, "log", "--reverse", "--pretty=format:%H%x1f%cI%x1f%an%x1f%B%x1e"}
 	if strings.TrimSpace(lastSHA) != "" {
 		args = append(args, fmt.Sprintf("%s..HEAD", strings.TrimSpace(lastSHA)))
@@ -623,6 +633,18 @@ func collectCommitsForWatch(repoPath string, lastSHA string, registeredAt string
 		})
 	}
 	return outCommits, nil
+}
+
+func repoHasCommits(repoPath string) (bool, error) {
+	out, err := exec.Command("git", "-C", repoPath, "rev-list", "--count", "--all").CombinedOutput()
+	if err != nil {
+		return false, fmt.Errorf("git rev-list failed at %s: %v", repoPath, err)
+	}
+	count, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return false, fmt.Errorf("git rev-list returned invalid count at %s: %q", repoPath, strings.TrimSpace(string(out)))
+	}
+	return count > 0, nil
 }
 
 func extractTicketActions(message string) map[string]string {
@@ -974,6 +996,35 @@ func (t *centralSyncWarningTracker) record(storeRoot, msg string) []string {
 	default:
 		return nil
 	}
+}
+
+type watchWarningTracker struct {
+	last map[string]struct{}
+}
+
+func newWatchWarningTracker() *watchWarningTracker {
+	return &watchWarningTracker{
+		last: map[string]struct{}{},
+	}
+}
+
+func (t *watchWarningTracker) record(messages []string) []string {
+	current := map[string]struct{}{}
+	out := make([]string, 0, len(messages))
+
+	for _, msg := range messages {
+		if _, duplicate := current[msg]; duplicate {
+			continue
+		}
+		current[msg] = struct{}{}
+		if _, unchanged := t.last[msg]; unchanged {
+			continue
+		}
+		out = append(out, msg)
+	}
+
+	t.last = current
+	return out
 }
 
 func centralSyncBlockedPath(storeRoot string) string {
