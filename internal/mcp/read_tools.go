@@ -27,7 +27,7 @@ func (s *Server) handleShow(_ stdctx.Context, req mcplib.CallToolRequest) (*mcpl
 	filtered := engine.FilterJournalByTickets(links, []string{record.ID})
 	payload := engine.TicketToMap(record)
 	payload["commit_links"] = filtered
-	return resultJSON(payload)
+	return s.resultJSON(payload)
 }
 
 func (s *Server) handleList(_ stdctx.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
@@ -87,7 +87,7 @@ func (s *Server) handleList(_ stdctx.Context, req mcplib.CallToolRequest) (*mcpl
 		sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	}
 	out = engine.LimitRecords(out, limit)
-	return resultJSON(map[string]any{
+	return s.resultJSON(map[string]any{
 		"items": engine.TicketSummariesToMaps(out),
 		"total": len(out),
 	})
@@ -117,7 +117,7 @@ func (s *Server) handleReady(_ stdctx.Context, _ mcplib.CallToolRequest) (*mcpli
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return resultJSON(map[string]any{"items": engine.TicketSummariesToMaps(out), "total": len(out)})
+	return s.resultJSON(map[string]any{"items": engine.TicketSummariesToMaps(out), "total": len(out)})
 }
 
 func (s *Server) handleBlocked(_ stdctx.Context, _ mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
@@ -136,7 +136,7 @@ func (s *Server) handleBlocked(_ stdctx.Context, _ mcplib.CallToolRequest) (*mcp
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return resultJSON(map[string]any{"items": engine.TicketSummariesToMaps(out), "total": len(out)})
+	return s.resultJSON(map[string]any{"items": engine.TicketSummariesToMaps(out), "total": len(out)})
 }
 
 func (s *Server) handleClosed(_ stdctx.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
@@ -160,7 +160,7 @@ func (s *Server) handleClosed(_ stdctx.Context, req mcplib.CallToolRequest) (*mc
 		sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	}
 	out = engine.LimitRecords(out, limit)
-	return resultJSON(map[string]any{"items": engine.TicketSummariesToMaps(out), "total": len(out)})
+	return s.resultJSON(map[string]any{"items": engine.TicketSummariesToMaps(out), "total": len(out)})
 }
 
 func (s *Server) handleStats(_ stdctx.Context, _ mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
@@ -176,7 +176,7 @@ func (s *Server) handleStats(_ stdctx.Context, _ mcplib.CallToolRequest) (*mcpli
 		byType[r.Front.Type]++
 		byPriority[r.Front.Priority]++
 	}
-	return resultJSON(map[string]any{
+	return s.resultJSON(map[string]any{
 		"counts":      byStatus,
 		"by_type":     byType,
 		"by_priority": byPriority,
@@ -202,7 +202,7 @@ func (s *Server) handleTimeline(_ stdctx.Context, req mcplib.CallToolRequest) (*
 			"ticket_ids":   bucket.TicketIDs,
 		})
 	}
-	return resultJSON(map[string]any{"weeks": rows})
+	return s.resultJSON(map[string]any{"weeks": rows})
 }
 
 func (s *Server) handleWorkflow(_ stdctx.Context, _ mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
@@ -210,7 +210,7 @@ func (s *Server) handleWorkflow(_ stdctx.Context, _ mcplib.CallToolRequest) (*mc
 	if err != nil {
 		return errResult(fmt.Sprintf("load workflow: %v", err))
 	}
-	return resultJSON(map[string]any{"content": workflow.Content})
+	return s.resultJSON(map[string]any{"content": workflow.Content})
 }
 
 func (s *Server) handleDepTree(_ stdctx.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
@@ -238,7 +238,7 @@ func (s *Server) handleDepTree(_ stdctx.Context, req mcplib.CallToolRequest) (*m
 	for _, line := range lines {
 		nodes = append(nodes, map[string]any{"line": line})
 	}
-	return resultJSON(map[string]any{"root": id, "nodes": nodes})
+	return s.resultJSON(map[string]any{"root": id, "nodes": nodes})
 }
 
 func (s *Server) handleEpicView(_ stdctx.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
@@ -278,7 +278,7 @@ func (s *Server) handleEpicView(_ stdctx.Context, req mcplib.CallToolRequest) (*
 		}
 	}
 
-	return resultJSON(map[string]any{
+	return s.resultJSON(map[string]any{
 		"epic":     engine.TicketSummaryToMap(epic),
 		"children": engine.TicketSummariesToMaps(children),
 		"deps":     deps,
@@ -328,7 +328,7 @@ func (s *Server) handleDashboard(_ stdctx.Context, _ mcplib.CallToolRequest) (*m
 		summary[r.Front.Status]++
 	}
 
-	return resultJSON(map[string]any{
+	return s.resultJSON(map[string]any{
 		"summary":        summary,
 		"in_progress":    engine.TicketSummariesToMaps(inProgress),
 		"blocked":        engine.TicketSummariesToMaps(blocked),
@@ -385,7 +385,7 @@ func (s *Server) handleProgress(_ stdctx.Context, req mcplib.CallToolRequest) (*
 	}
 	sort.Slice(closedTickets, func(i, j int) bool { return closedTickets[i].ID < closedTickets[j].ID })
 
-	return resultJSON(map[string]any{
+	return s.resultJSON(map[string]any{
 		"window":         window,
 		"closed":         engine.TicketSummariesToMaps(closedTickets),
 		"commit_links":   windowEntries,
@@ -416,7 +416,7 @@ func (s *Server) handleLifecycle(_ stdctx.Context, req mcplib.CallToolRequest) (
 		}
 	}
 
-	return resultJSON(map[string]any{
+	return s.resultJSON(map[string]any{
 		"ticket":        engine.TicketToMap(record),
 		"commit_links":  filtered,
 		"work_duration": workDuration,
@@ -505,7 +505,7 @@ func (s *Server) handleContext(_ stdctx.Context, req mcplib.CallToolRequest) (*m
 		recentCommits = recentCommits[len(recentCommits)-n:]
 	}
 
-	return resultJSON(map[string]any{
+	return s.resultJSON(map[string]any{
 		"ticket":         engine.TicketToMap(record),
 		"parent":         parentJSON,
 		"deps":           deps,

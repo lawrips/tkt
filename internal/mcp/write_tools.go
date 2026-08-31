@@ -91,7 +91,7 @@ func (s *Server) handleCreate(_ stdctx.Context, req mcplib.CallToolRequest) (*mc
 		FieldsChanged: []string{"title", "status", "type", "priority"},
 	})
 
-	return resultJSON(engine.TicketToMap(record))
+	return s.resultJSON(engine.TicketToMap(record))
 }
 
 func (s *Server) handleEdit(_ stdctx.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
@@ -167,7 +167,7 @@ func (s *Server) handleEdit(_ stdctx.Context, req mcplib.CallToolRequest) (*mcpl
 		FieldsChanged: changed,
 	})
 
-	return resultJSON(engine.TicketToMap(record))
+	return s.resultJSON(engine.TicketToMap(record))
 }
 
 func (s *Server) handleAddNote(_ stdctx.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
@@ -212,7 +212,7 @@ func (s *Server) handleAddNote(_ stdctx.Context, req mcplib.CallToolRequest) (*m
 		FieldsChanged: []string{"notes"},
 	})
 
-	return resultJSON(map[string]any{
+	return s.resultJSON(map[string]any{
 		"ticket_id": record.ID,
 		"note":      map[string]string{"at": ts, "text": text},
 	})
@@ -249,7 +249,7 @@ func (s *Server) handleDelete(_ stdctx.Context, req mcplib.CallToolRequest) (*mc
 		})
 	}
 
-	return resultJSON(map[string]any{
+	return s.resultJSON(map[string]any{
 		"deleted":   deleted,
 		"not_found": notFound,
 	})
@@ -290,7 +290,7 @@ func (s *Server) handleDep(_ stdctx.Context, req mcplib.CallToolRequest) (*mcpli
 		FieldsChanged: []string{"deps"},
 	})
 
-	return resultJSON(map[string]any{
+	return s.resultJSON(map[string]any{
 		"ticket_id":     record.ID,
 		"updated_field": "deps",
 		"values":        record.Front.Deps,
@@ -332,7 +332,7 @@ func (s *Server) handleUndep(_ stdctx.Context, req mcplib.CallToolRequest) (*mcp
 		FieldsChanged: []string{"deps"},
 	})
 
-	return resultJSON(map[string]any{
+	return s.resultJSON(map[string]any{
 		"ticket_id":     record.ID,
 		"updated_field": "deps",
 		"values":        record.Front.Deps,
@@ -393,7 +393,7 @@ func (s *Server) handleLink(_ stdctx.Context, req mcplib.CallToolRequest) (*mcpl
 		FieldsChanged: []string{"links"},
 	})
 
-	return resultJSON(map[string]any{
+	return s.resultJSON(map[string]any{
 		"ticket_id":     sourceRecord.ID,
 		"updated_field": "links",
 		"values":        sourceRecord.Front.Links,
@@ -443,7 +443,7 @@ func (s *Server) handleUnlink(_ stdctx.Context, req mcplib.CallToolRequest) (*mc
 		FieldsChanged: []string{"links"},
 	})
 
-	return resultJSON(map[string]any{
+	return s.resultJSON(map[string]any{
 		"ticket_id":     sourceRecord.ID,
 		"updated_field": "links",
 		"values":        sourceRecord.Front.Links,

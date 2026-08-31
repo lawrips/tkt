@@ -25,6 +25,11 @@ codex mcp add tkt -- $(which tkt) mcp
 
 Run whichever is appropriate. MCP tools become available on the next agent session.
 
+Each MCP tool accepts an optional `project` field. Without it, the server uses
+the project resolved from its working directory. With it, the server selects
+that exact registered project for the current call only. Restart the agent
+session after upgrading tkt so the client refreshes the tool schemas.
+
 ### 2. Add Agent Instructions
 
 Run `tkt agent-instructions` to get generic tkt agent instructions. Append its
