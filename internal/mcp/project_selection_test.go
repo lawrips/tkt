@@ -87,12 +87,16 @@ func TestMCPProjectSelectionRejectsUnsafeUnknownAndRevokedProjects(t *testing.T)
 	if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
 		t.Fatalf("create escaping project symlink: %v", err)
 	}
+	if err := os.Symlink(filepath.Join(outside, "missing"), filepath.Join(root, "dangling")); err != nil {
+		t.Fatalf("create dangling project symlink: %v", err)
+	}
 
 	cfg, err := project.Load()
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
 	cfg.Projects["escape"] = project.ProjectConfig{Store: "central"}
+	cfg.Projects["dangling"] = project.ProjectConfig{Store: "central"}
 	if err := project.Save(cfg); err != nil {
 		t.Fatalf("save escaping project: %v", err)
 	}
@@ -107,6 +111,8 @@ func TestMCPProjectSelectionRejectsUnsafeUnknownAndRevokedProjects(t *testing.T)
 
 	escape, callErr := invokeTool(srv, "stats", map[string]any{"project": "escape"})
 	requireSelectionError(t, escape, callErr, root, outside)
+	dangling, callErr := invokeTool(srv, "stats", map[string]any{"project": "dangling"})
+	requireSelectionError(t, dangling, callErr, root, outside)
 
 	delete(cfg.Projects, "beta")
 	if err := project.Save(cfg); err != nil {

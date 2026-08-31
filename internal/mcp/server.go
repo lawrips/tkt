@@ -171,9 +171,12 @@ func pathWithinRoot(root string, candidate string) bool {
 	// A missing project directory is safe to create after the lexical check.
 	// If it exists, resolve symlinks and ensure the registered name does not
 	// alias a directory outside the configured central store.
+	_, candidateLstatErr := os.Lstat(candidateAbs)
 	candidateResolved, candidateErr := filepath.EvalSymlinks(candidateAbs)
 	if candidateErr != nil {
-		return os.IsNotExist(candidateErr)
+		// EvalSymlinks also reports ENOENT for dangling symlinks. Only allow a
+		// missing directory when the registered path itself does not exist.
+		return os.IsNotExist(candidateErr) && os.IsNotExist(candidateLstatErr)
 	}
 	rootResolved, rootErr := filepath.EvalSymlinks(rootAbs)
 	if rootErr != nil {
