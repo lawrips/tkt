@@ -1,10 +1,12 @@
 package mcp
 
 import (
+	stdctx "context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -19,13 +21,24 @@ type Server struct {
 	s           *server.MCPServer
 	projectName string
 	ticketDir   string
+	resolver    projectResolver
 }
+
+type projectTarget struct {
+	name      string
+	ticketDir string
+}
+
+type projectResolver func(requested string, explicit bool) (projectTarget, error)
+
+type projectHandler func(*Server, stdctx.Context, mcplib.CallToolRequest) (*mcplib.CallToolResult, error)
 
 // NewServer creates and configures the MCP server with all tools registered.
 func NewServer(projectName string, ticketDir string) *Server {
 	s := &Server{
 		projectName: projectName,
 		ticketDir:   ticketDir,
+		resolver:    registeredProjectResolver(projectName),
 	}
 	s.s = server.NewMCPServer(
 		"tkt",
@@ -35,6 +48,146 @@ func NewServer(projectName string, ticketDir string) *Server {
 	s.registerReadTools()
 	s.registerWriteTools()
 	return s
+}
+
+func projectOption() mcplib.ToolOption {
+	return mcplib.WithString("project", mcplib.Description("Registered tkt project name. Omit to use the server's cwd-resolved default project."))
+}
+
+func (s *Server) withProject(handler projectHandler) server.ToolHandlerFunc {
+	return func(ctx stdctx.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
+		requested, explicit, err := projectArgument(req)
+		if err != nil {
+			return errResult(err.Error())
+		}
+		target, err := s.resolver(requested, explicit)
+		if err != nil {
+			return errResult(err.Error())
+		}
+
+		// Handlers operate on a request-local copy. Never mutate the shared
+		// server's project or store fields when selecting another project.
+		scoped := *s
+		scoped.projectName = target.name
+		scoped.ticketDir = target.ticketDir
+		return handler(&scoped, ctx, req)
+	}
+}
+
+func projectArgument(req mcplib.CallToolRequest) (string, bool, error) {
+	value, ok := req.GetArguments()["project"]
+	if !ok {
+		return "", false, nil
+	}
+	name, ok := value.(string)
+	if !ok {
+		return "", true, fmt.Errorf("project must be a string")
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", true, fmt.Errorf("project must not be empty")
+	}
+	return name, true, nil
+}
+
+func registeredProjectResolver(defaultProject string) projectResolver {
+	return func(requested string, explicit bool) (projectTarget, error) {
+		name := defaultProject
+		if explicit {
+			name = requested
+		}
+		if err := validateProjectName(name); err != nil {
+			return projectTarget{}, err
+		}
+
+		// Reload the catalog for every call so removing a registration revokes
+		// access without restarting a long-lived MCP process.
+		cfg, err := project.Load()
+		if err != nil {
+			return projectTarget{}, fmt.Errorf("registered project catalog is unavailable")
+		}
+		entry, ok := cfg.Projects[name]
+		if !ok {
+			return projectTarget{}, fmt.Errorf("project %q is not registered", name)
+		}
+		target, err := targetForRegisteredProject(name, entry)
+		if err != nil {
+			return projectTarget{}, fmt.Errorf("registered project %q is unavailable", name)
+		}
+		return target, nil
+	}
+}
+
+func validateProjectName(name string) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("no default project is available")
+	}
+	if filepath.IsAbs(name) || name == "." || name == ".." || strings.ContainsAny(name, `/\\`) || strings.ContainsRune(name, '\x00') {
+		return fmt.Errorf("project must be a registered project name")
+	}
+	return nil
+}
+
+func targetForRegisteredProject(name string, entry project.ProjectConfig) (projectTarget, error) {
+	store := strings.TrimSpace(entry.Store)
+	if store == "" {
+		store = "local"
+	}
+
+	switch store {
+	case "central":
+		root, err := engine.CentralStoreRoot()
+		if err != nil {
+			return projectTarget{}, err
+		}
+		dir := filepath.Join(root, name)
+		if !pathWithinRoot(root, dir) {
+			return projectTarget{}, fmt.Errorf("central project escapes store root")
+		}
+		return projectTarget{name: name, ticketDir: dir}, nil
+	case "local":
+		if strings.TrimSpace(entry.Path) == "" {
+			return projectTarget{}, fmt.Errorf("local project has no registered path")
+		}
+		return projectTarget{name: name, ticketDir: filepath.Join(entry.Path, ticket.DefaultDir)}, nil
+	default:
+		return projectTarget{}, fmt.Errorf("unsupported project store")
+	}
+}
+
+func pathWithinRoot(root string, candidate string) bool {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	candidateAbs, err := filepath.Abs(candidate)
+	if err != nil {
+		return false
+	}
+	if !relativePathWithinRoot(rootAbs, candidateAbs) {
+		return false
+	}
+
+	// A missing project directory is safe to create after the lexical check.
+	// If it exists, resolve symlinks and ensure the registered name does not
+	// alias a directory outside the configured central store.
+	candidateResolved, candidateErr := filepath.EvalSymlinks(candidateAbs)
+	if candidateErr != nil {
+		return os.IsNotExist(candidateErr)
+	}
+	rootResolved, rootErr := filepath.EvalSymlinks(rootAbs)
+	if rootErr != nil {
+		return false
+	}
+	return relativePathWithinRoot(rootResolved, candidateResolved)
+}
+
+func relativePathWithinRoot(root string, candidate string) bool {
+	rel, err := filepath.Rel(root, candidate)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) && !filepath.IsAbs(rel)
 }
 
 // ServeStdio starts the stdio JSON-RPC transport (blocks until stdin closes).
@@ -48,8 +201,9 @@ func (s *Server) registerReadTools() {
 		mcplib.NewTool("show",
 			mcplib.WithDescription("Display ticket details"),
 			mcplib.WithString("ticket_id", mcplib.Required(), mcplib.Description("Ticket ID")),
+			projectOption(),
 		),
-		s.handleShow,
+		s.withProject((*Server).handleShow),
 	)
 
 	// list
@@ -65,24 +219,27 @@ func (s *Server) registerReadTools() {
 			mcplib.WithString("search", mcplib.Description("Text search on ticket ID and title (case-insensitive substring match)")),
 			mcplib.WithString("sort", mcplib.Description("Sort field: id, created, modified, priority, title. Append :desc for descending (e.g. created:desc)")),
 			mcplib.WithNumber("limit", mcplib.Description("Maximum number of results to return")),
+			projectOption(),
 		),
-		s.handleList,
+		s.withProject((*Server).handleList),
 	)
 
 	// ready
 	s.s.AddTool(
 		mcplib.NewTool("ready",
 			mcplib.WithDescription("Tickets with all dependencies resolved"),
+			projectOption(),
 		),
-		s.handleReady,
+		s.withProject((*Server).handleReady),
 	)
 
 	// blocked
 	s.s.AddTool(
 		mcplib.NewTool("blocked",
 			mcplib.WithDescription("Tickets with unresolved dependencies"),
+			projectOption(),
 		),
-		s.handleBlocked,
+		s.withProject((*Server).handleBlocked),
 	)
 
 	// closed
@@ -91,16 +248,18 @@ func (s *Server) registerReadTools() {
 			mcplib.WithDescription("Recently closed tickets"),
 			mcplib.WithNumber("limit", mcplib.Description("Maximum number to return (default 20)")),
 			mcplib.WithString("sort", mcplib.Description("Sort field: id, created, modified, priority, title. Append :desc for descending (e.g. modified:desc)")),
+			projectOption(),
 		),
-		s.handleClosed,
+		s.withProject((*Server).handleClosed),
 	)
 
 	// stats
 	s.s.AddTool(
 		mcplib.NewTool("stats",
 			mcplib.WithDescription("Project health summary counts"),
+			projectOption(),
 		),
-		s.handleStats,
+		s.withProject((*Server).handleStats),
 	)
 
 	// timeline
@@ -108,16 +267,18 @@ func (s *Server) registerReadTools() {
 		mcplib.NewTool("timeline",
 			mcplib.WithDescription("Closed tickets grouped by week"),
 			mcplib.WithNumber("weeks", mcplib.Description("Number of weeks to show (default 4)")),
+			projectOption(),
 		),
-		s.handleTimeline,
+		s.withProject((*Server).handleTimeline),
 	)
 
 	// workflow
 	s.s.AddTool(
 		mcplib.NewTool("workflow",
 			mcplib.WithDescription("Read the user's tkt workflow guide"),
+			projectOption(),
 		),
-		s.handleWorkflow,
+		s.withProject((*Server).handleWorkflow),
 	)
 
 	// dep_tree
@@ -126,8 +287,9 @@ func (s *Server) registerReadTools() {
 			mcplib.WithDescription("Show dependency tree for a ticket"),
 			mcplib.WithString("ticket_id", mcplib.Required(), mcplib.Description("Root ticket ID")),
 			mcplib.WithBoolean("full", mcplib.Description("Include closed dependencies")),
+			projectOption(),
 		),
-		s.handleDepTree,
+		s.withProject((*Server).handleDepTree),
 	)
 
 	// epic_view
@@ -135,16 +297,18 @@ func (s *Server) registerReadTools() {
 		mcplib.NewTool("epic_view",
 			mcplib.WithDescription("Precomputed epic hierarchy with children and commits"),
 			mcplib.WithString("ticket_id", mcplib.Required(), mcplib.Description("Epic ticket ID")),
+			projectOption(),
 		),
-		s.handleEpicView,
+		s.withProject((*Server).handleEpicView),
 	)
 
 	// dashboard
 	s.s.AddTool(
 		mcplib.NewTool("dashboard",
 			mcplib.WithDescription("Project-level summary: in progress, blocked, ready, recent commits"),
+			projectOption(),
 		),
-		s.handleDashboard,
+		s.withProject((*Server).handleDashboard),
 	)
 
 	// progress
@@ -152,8 +316,9 @@ func (s *Server) registerReadTools() {
 		mcplib.NewTool("progress",
 			mcplib.WithDescription("Recent progress: closed tickets and commit links in a time window"),
 			mcplib.WithString("window", mcplib.Description("Time window: today or week (default week)")),
+			projectOption(),
 		),
-		s.handleProgress,
+		s.withProject((*Server).handleProgress),
 	)
 
 	// lifecycle
@@ -161,8 +326,9 @@ func (s *Server) registerReadTools() {
 		mcplib.NewTool("lifecycle",
 			mcplib.WithDescription("Lifecycle data for a ticket: status history and duration"),
 			mcplib.WithString("ticket_id", mcplib.Required(), mcplib.Description("Ticket ID")),
+			projectOption(),
 		),
-		s.handleLifecycle,
+		s.withProject((*Server).handleLifecycle),
 	)
 
 	// context
@@ -170,8 +336,9 @@ func (s *Server) registerReadTools() {
 		mcplib.NewTool("context",
 			mcplib.WithDescription("Composite view: ticket + parent + deps status + linked tickets + children + recent commits"),
 			mcplib.WithString("ticket_id", mcplib.Required(), mcplib.Description("Ticket ID")),
+			projectOption(),
 		),
-		s.handleContext,
+		s.withProject((*Server).handleContext),
 	)
 }
 
@@ -192,8 +359,9 @@ func (s *Server) registerWriteTools() {
 			mcplib.WithString("design", mcplib.Description("Design section content")),
 			mcplib.WithString("acceptance_criteria", mcplib.Description("Acceptance criteria content")),
 			mcplib.WithString("external_ref", mcplib.Description("External reference")),
+			projectOption(),
 		),
-		s.handleCreate,
+		s.withProject((*Server).handleCreate),
 	)
 
 	// edit
@@ -213,8 +381,9 @@ func (s *Server) registerWriteTools() {
 			mcplib.WithString("design", mcplib.Description("New design content (empty string clears design)")),
 			mcplib.WithString("acceptance_criteria", mcplib.Description("New acceptance criteria (empty string clears acceptance_criteria)")),
 			mcplib.WithString("external_ref", mcplib.Description("New external reference (empty string clears external_ref)")),
+			projectOption(),
 		),
-		s.handleEdit,
+		s.withProject((*Server).handleEdit),
 	)
 
 	// add_note
@@ -224,8 +393,9 @@ func (s *Server) registerWriteTools() {
 			mcplib.WithString("ticket_id", mcplib.Required(), mcplib.Description("Ticket ID")),
 			mcplib.WithString("text", mcplib.Required(), mcplib.Description("Note text")),
 			mcplib.WithString("source", mcplib.Required(), mcplib.Description("Caller identity for attribution")),
+			projectOption(),
 		),
-		s.handleAddNote,
+		s.withProject((*Server).handleAddNote),
 	)
 
 	// delete
@@ -234,8 +404,9 @@ func (s *Server) registerWriteTools() {
 			mcplib.WithDescription("Delete one or more tickets"),
 			mcplib.WithArray("ticket_ids", mcplib.Required(), mcplib.Description("List of ticket IDs to delete")),
 			mcplib.WithString("source", mcplib.Required(), mcplib.Description("Caller identity for attribution")),
+			projectOption(),
 		),
-		s.handleDelete,
+		s.withProject((*Server).handleDelete),
 	)
 
 	// dep
@@ -245,8 +416,9 @@ func (s *Server) registerWriteTools() {
 			mcplib.WithString("ticket_id", mcplib.Required(), mcplib.Description("Ticket ID")),
 			mcplib.WithString("dep_id", mcplib.Required(), mcplib.Description("Dependency ticket ID")),
 			mcplib.WithString("source", mcplib.Required(), mcplib.Description("Caller identity for attribution")),
+			projectOption(),
 		),
-		s.handleDep,
+		s.withProject((*Server).handleDep),
 	)
 
 	// undep
@@ -256,8 +428,9 @@ func (s *Server) registerWriteTools() {
 			mcplib.WithString("ticket_id", mcplib.Required(), mcplib.Description("Ticket ID")),
 			mcplib.WithString("dep_id", mcplib.Required(), mcplib.Description("Dependency ticket ID to remove")),
 			mcplib.WithString("source", mcplib.Required(), mcplib.Description("Caller identity for attribution")),
+			projectOption(),
 		),
-		s.handleUndep,
+		s.withProject((*Server).handleUndep),
 	)
 
 	// link
@@ -266,8 +439,9 @@ func (s *Server) registerWriteTools() {
 			mcplib.WithDescription("Create symmetric links between tickets"),
 			mcplib.WithArray("ticket_ids", mcplib.Required(), mcplib.Description("List of ticket IDs to link (first is source, rest are targets)")),
 			mcplib.WithString("source", mcplib.Required(), mcplib.Description("Caller identity for attribution")),
+			projectOption(),
 		),
-		s.handleLink,
+		s.withProject((*Server).handleLink),
 	)
 
 	// unlink
@@ -277,14 +451,21 @@ func (s *Server) registerWriteTools() {
 			mcplib.WithString("ticket_id", mcplib.Required(), mcplib.Description("Source ticket ID")),
 			mcplib.WithString("target_id", mcplib.Required(), mcplib.Description("Target ticket ID to unlink")),
 			mcplib.WithString("source", mcplib.Required(), mcplib.Description("Caller identity for attribution")),
+			projectOption(),
 		),
-		s.handleUnlink,
+		s.withProject((*Server).handleUnlink),
 	)
 }
 
-// resultJSON returns a CallToolResult with JSON-encoded data.
-func resultJSON(data any) (*mcplib.CallToolResult, error) {
-	raw, err := json.Marshal(data)
+// resultJSON returns a CallToolResult with JSON-encoded data and the resolved
+// project while preserving each tool's existing top-level result shape.
+func (s *Server) resultJSON(data map[string]any) (*mcplib.CallToolResult, error) {
+	payload := make(map[string]any, len(data)+1)
+	for key, value := range data {
+		payload[key] = value
+	}
+	payload["resolved_project"] = s.projectName
+	raw, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
@@ -329,17 +510,14 @@ func resolveProjectFromCwd() (string, string, error) {
 	if !ok {
 		return "", "", fmt.Errorf("project %q not found in config", name)
 	}
-	dir := ""
-	if entry.Store == "central" {
-		d, err := engine.CentralProjectDir(name)
-		if err != nil {
-			return "", "", err
-		}
-		dir = d
-	} else if entry.Path != "" {
-		dir = filepath.Join(entry.Path, ".tickets")
+	if err := validateProjectName(name); err != nil {
+		return "", "", err
 	}
-	return name, dir, nil
+	target, err := targetForRegisteredProject(name, entry)
+	if err != nil {
+		return "", "", fmt.Errorf("project %q is unavailable", name)
+	}
+	return target.name, target.ticketDir, nil
 }
 
 // NewServerFromCwd creates an MCP server by resolving the project from the cwd.

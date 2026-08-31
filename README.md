@@ -140,6 +140,8 @@ These are read-only views computed over ticket files and the commit journal:
 
 Read tools include `list`, `show`, `context`, `epic_view`, `dashboard`, `progress`, `stats`, `ready`, `blocked`, `closed`, `dep_tree`, `lifecycle`, `timeline`, and `workflow`. Write tools include `create`, `edit`, `delete`, `add_note`, `dep`, `undep`, `link`, and `unlink`.
 
+Every tool accepts an optional `project` field. Omit it to use the project resolved from the MCP server's working directory, or pass an exact registered project name to work with another configured project from the same server process. Project selection is revalidated on every call; unknown names and path-shaped values are rejected. Successful JSON results include `resolved_project` and never include ticket-store paths.
+
 Write operations require a `source` field identifying the caller (e.g. "claude", "codex", "human"). This gives you an audit trail — you can see which agent or human made each change.
 
 

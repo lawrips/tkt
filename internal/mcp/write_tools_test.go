@@ -14,6 +14,20 @@ func TestToolSchemaIncludesAllFields(t *testing.T) {
 	ticketDir := t.TempDir()
 	srv := NewServer("demo", ticketDir)
 	tools := srv.s.ListTools()
+	if len(tools) != 22 {
+		t.Fatalf("expected 22 MCP tools, got %d", len(tools))
+	}
+	for name, serverTool := range tools {
+		props := serverTool.Tool.InputSchema.Properties
+		if _, ok := props["project"]; !ok {
+			t.Errorf("tool %q schema missing optional project parameter", name)
+		}
+		for _, required := range serverTool.Tool.InputSchema.Required {
+			if required == "project" {
+				t.Errorf("tool %q unexpectedly requires project", name)
+			}
+		}
+	}
 
 	tests := []struct {
 		tool   string
@@ -108,7 +122,7 @@ func TestEditDesignAcceptanceCriteriaExternalRef(t *testing.T) {
 		Params: mcplib.CallToolParams{
 			Arguments: map[string]any{
 				"source":              "test",
-				"ticket_id":          "edit-1",
+				"ticket_id":           "edit-1",
 				"design":              "New design",
 				"acceptance_criteria": "- New AC",
 				"external_ref":        "EXT-456",
@@ -160,7 +174,7 @@ func TestEditEmptyStringClearsFields(t *testing.T) {
 		Params: mcplib.CallToolParams{
 			Arguments: map[string]any{
 				"source":              "test",
-				"ticket_id":          "clear-1",
+				"ticket_id":           "clear-1",
 				"title":               "",
 				"description":         "",
 				"design":              "",

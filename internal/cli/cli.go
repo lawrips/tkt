@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime/debug"
 	"strings"
 
 	"github.com/lawrips/tkt/internal/project"
@@ -30,8 +31,28 @@ type context struct {
 
 var versionString = "dev"
 
-// SetVersion sets the version string displayed by `tkt version`.
-func SetVersion(v string) { versionString = v }
+// SetVersion sets the version string displayed by `tkt version`. Tagged
+// `go install module@version` builds carry the module version in Go build
+// information even when no release linker flag was supplied.
+func SetVersion(v string) {
+	moduleVersion := ""
+	if info, ok := debug.ReadBuildInfo(); ok {
+		moduleVersion = info.Main.Version
+	}
+	versionString = resolveVersion(v, moduleVersion)
+}
+
+func resolveVersion(explicit string, moduleVersion string) string {
+	explicit = strings.TrimSpace(explicit)
+	if explicit != "" && explicit != "dev" && explicit != "(devel)" {
+		return explicit
+	}
+	moduleVersion = strings.TrimSpace(moduleVersion)
+	if moduleVersion != "" && moduleVersion != "dev" && moduleVersion != "(devel)" {
+		return moduleVersion
+	}
+	return "dev"
+}
 
 // Run dispatches the tkt CLI.
 func Run(args []string, stdout io.Writer, stderr io.Writer) error {
